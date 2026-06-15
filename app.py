@@ -1,120 +1,143 @@
 import streamlit as st
 import pandas as pd
-from io import BytesIO
 
-st.title("📊 Master Tracker → Nokia OLT Sync Tool")
+st.title("📊 OLT Tracker Auto-Updater")
 
-# =========================
-# FILE UPLOAD
-# =========================
-master_file = st.file_uploader("Upload Master Tracker (Data File)", type=["xlsx"])
-rollout_file = st.file_uploader("Upload Nokia OLT Tracker", type=["xlsx"])
+# ----------------------------
+# Upload files
+# ----------------------------
+master_file = st.file_uploader("Upload Master Tracker File", type=["xlsx"])
+olt_file = st.file_uploader("Upload Nokia OLT Tracker", type=["xlsx"])
 
-if master_file and rollout_file:
+# ----------------------------
+# CLEAN COLUMN NAMES FUNCTION
+# ----------------------------
+def clean_columns(df):
+    df.columns = (
+        df.columns
+        .astype(str)
+        .str.replace("\n", " ", regex=True)
+        .str.replace("  ", " ")
+        .str.strip()
+    )
+    return df
 
-    master_xls = pd.ExcelFile(master_file)
-    rollout_xls = pd.ExcelFile(rollout_file)
+# ----------------------------
+# AUTO LOAD SHEET
+# ----------------------------
+def load_sheet(file, keyword):
+    xl = pd.ExcelFile(file)
+    for sheet in xl.sheet_names:
+        if keyword.lower() in sheet.lower():
+            return pd.read_excel(file, sheet_name=sheet)
+    return None
 
-    st.subheader("Select Sheets")
+# ----------------------------
+# MAIN PROCESS
+# ----------------------------
+if master_file and olt_file:
 
-    master_sheet = st.selectbox("Select MASTER LIST sheet", master_xls.sheet_names)
-    rollout_sheet = st.selectbox("Select Rollout sheet", rollout_xls.sheet_names)
+    # Load sheets dynamically
+    master_df = load_sheet(master_file, "master")
+    olt_df = load_sheet(olt_file, "rollout")
 
-    # =========================
-    # LOAD DATA
-    # =========================
-    master_df = pd.read_excel(master_file, sheet_name=master_sheet)
-    rollout_df = pd.read_excel(rollout_file, sheet_name=rollout_sheet)
+    if master_df is None:
+        st.error("❌ MASTER LIST sheet not found")
+        st.stop()
 
-    # Clean column names
-    master_df.columns = master_df.columns.str.strip()
-    rollout_df.columns = rollout_df.columns.str.strip()
+    if olt_df is None:
+        st.error("❌ Rollout sheet not found")
+        st.stop()
 
-    # =========================
-    # REQUIRED COLUMNS CHECK
-    # =========================
-    required_master = ["Site Name", "PLAID"]
-    required_rollout = ["Site Name", "PLAID"]
+    # Clean columns
+    master_df = clean_columns(master_df)
+    olt_df = clean_columns(olt_df)
 
-    if not all(col in master_df.columns for col in required_master):
+    st.success("✅ Files loaded successfully")
+
+    # ----------------------------
+    # REQUIRED COLUMN CHECK
+    # ----------------------------
+    required_master_cols = ["PLAID", "Site Name", "Region", "YEAR"]
+    required_olt_cols = ["PLAID", "Site Name"]
+
+    if not all(col in master_df.columns for col in required_master_cols):
         st.error("❌ Master file missing required columns")
         st.stop()
 
-    if not all(col in rollout_df.columns for col in required_rollout):
-        st.error("❌ Rollout file missing required columns")
+    if not all(col in olt_df.columns for col in required_olt_cols):
+        st.error("❌ OLT file missing required columns")
         st.stop()
 
-    # =========================
-    # MAPPING (FULL STRUCTURE)
-    # =========================
-    def map_row(master_row):
-        """Translate Master → Rollout structure"""
+    # ----------------------------
+    # FIND MISSING ENTRIES
+    # ----------------------------
+    existing_plaids = olt_df["PLAID"].astype(str).str.strip()
+    master_df["PLAID"] = master_df["PLAID"].astype(str).str.strip()
 
+    missing_df = master_df[~master_df["PLAID"].isin(existing_plaids)]
+
+    st.subheader(f"🔍 Missing Entries Found: {len(missing_df)}")
+
+    if len(missing_df) == 0:
+        st.success("✅ No missing entries. Files are aligned.")
+    else:
+        st.dataframe(missing_df[["PLAID", "Site Name", "Region"]])
+
+    # ----------------------------
+    # TRANSFORMATION LOGIC
+    # ----------------------------
+    def transform_row(row):
         return {
-            "Project Tagging": master_row.get("PROJECT or PROGRAM"),
-            "Build Year": master_row.get("YEAR"),
-            "Region": master_row.get("Region"),
-            "Project Type": master_row.get("OLT Scope"),
-            "Site Name": master_row.get("Site Name"),
-            "PLAID": master_row.get("PLAID"),
-            "Equipment Type": master_row.get("Electronics Equipment"),
-            "No. of Cards": master_row.get("Number of Cards"),
-            "Site Status": master_row.get("Status"),
-            "Site Survey Actual Date": master_row.get("Survey Date"),
-            "TSSR Approval Actual Date": master_row.get("TSSR Approved Date"),
-            "Installation done Actual Date": master_row.get("Installed date"),
-            "Powertapping done Actual Date": master_row.get("POWERTAPPED DATE"),
-            "Integration done Actual Date": master_row.get("Integrated Date"),
-            "PAT Done Actual Date": master_row.get("Pre PAT Date"),
-            "PAC Approval Actual Date": master_row.get("PAC'ed"),
-            "FAC Approval Actual Date": master_row.get("FAC'ed"),
+            "Project Tagging": "AUTO-ADDED",
+            "Build Year": row.get("YEAR", ""),
+            "Region": row.get("Region", ""),
+            "Clustering": "",
+            "Project Type": row.get("PROJECT or PROGRAM", ""),
+            "Site Name": row.get("Site Name", ""),
+            "PLAID": row.get("PLAID", ""),
+            "ORIGINAL NO. OF LINES": "",
+            "NO. OF LINES TO BUILD": "",
+            "Cabinet Location": "",
+            "Equipment Type": row.get("Electronics Equipment", ""),
+            "No. of Chassis": "",
+            "No. of Cards": row.get("Number of Cards", ""),
+            "Site Status": row.get("Status", ""),
+            "Target Month": "",
+            "GO/STOP": "",
+            "Milestone": row.get("Latest Milestone", "")
         }
 
-    # =========================
-    # FIND MISSING
-    # =========================
-    master_df["KEY"] = master_df["PLAID"].astype(str).str.strip()
-    rollout_df["KEY"] = rollout_df["PLAID"].astype(str).str.strip()
+    transformed_rows = pd.DataFrame([transform_row(r) for _, r in missing_df.iterrows()])
 
-    missing_rows = master_df[~master_df["KEY"].isin(rollout_df["KEY"])]
+    # ----------------------------
+    # APPEND TO OLT
+    # ----------------------------
+    updated_df = pd.concat([olt_df, transformed_rows], ignore_index=True)
 
-    st.success(f"✅ Missing Entries Found: {len(missing_rows)}")
+    # Mark new rows
+    updated_df["NEW_ENTRY"] = updated_df["PLAID"].isin(missing_df["PLAID"])
 
-    # =========================
-    # ADD NEW ROWS
-    # =========================
-    new_entries = []
-
-    for _, row in missing_rows.iterrows():
-        new_entries.append(map_row(row))
-
-    new_df = pd.DataFrame(new_entries)
-
-    updated_rollout = pd.concat([rollout_df, new_df], ignore_index=True)
-
-    # =========================
+    # ----------------------------
     # HIGHLIGHT FUNCTION
-    # =========================
-    def highlight_rows(row):
-        if row["KEY"] in missing_rows["KEY"].values:
+    # ----------------------------
+    def highlight_row(row):
+        if row["NEW_ENTRY"]:
             return ["background-color: yellow"] * len(row)
         return [""] * len(row)
 
-    styled_df = updated_rollout.style.apply(highlight_rows, axis=1)
+    st.subheader("📌 Updated OLT Tracker Preview")
+    st.dataframe(updated_df.style.apply(highlight_row, axis=1))
 
-    st.subheader("📋 Preview Updated Rollout")
-    st.dataframe(styled_df)
+    # ----------------------------
+    # DOWNLOAD FILE
+    # ----------------------------
+    output_file = "updated_OLT_tracker.xlsx"
+    updated_df.to_excel(output_file, index=False)
 
-    # =========================
-    # DOWNLOAD
-    # =========================
-    output = BytesIO()
-    updated_rollout.to_excel(output, index=False)
-    output.seek(0)
-
-    st.download_button(
-        label="⬇️ Download Updated Rollout File",
-        data=output,
-        file_name="updated_rollout.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    with open(output_file, "rb") as f:
+        st.download_button(
+            label="📥 Download Updated File",
+            data=f,
+            file_name=output_file
+        )
