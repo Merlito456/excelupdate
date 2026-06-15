@@ -110,38 +110,24 @@ if master_file and olt_file:
     master_df_cleaned = clean_columns(master_df.copy())
     olt_df_cleaned = clean_columns(olt_df.copy())
 
-    # Smart fallback guesses
+    # Smart fallback guesses for specific layout identifiers
     clean_m_plaid = find_column(master_df_cleaned.columns, ["plaid"])
     clean_o_plaid = find_column(olt_df_cleaned.columns, ["plaid"])
-    clean_m_year = find_column(master_df_cleaned.columns, ["year"])
-    clean_m_type = find_column(master_df_cleaned.columns, ["scope", "type", "nature"])
 
     def get_index_fallback(clean_target, original_list, clean_list):
         if clean_target in clean_list:
             return clean_list.index(clean_target)
         return 0
 
-    # 🎯 CONTROL PANEL: Manual Mapping Dropdowns Overrides
-    st.sidebar.subheader("🎯 Direct Column Mapping Controls")
-    
+    st.sidebar.subheader("🎯 Primary Identifier Validation")
     m_plaid_idx = get_index_fallback(clean_m_plaid, orig_master_cols, list(master_df_cleaned.columns))
     chosen_master_plaid_raw = st.sidebar.selectbox("🔑 Master PLAID Column (Unique Key)", orig_master_cols, index=m_plaid_idx)
     
     o_plaid_idx = get_index_fallback(clean_o_plaid, orig_olt_cols, list(olt_df_cleaned.columns))
     chosen_olt_plaid_raw = st.sidebar.selectbox("🔑 OLT PLAID Column", orig_olt_cols, index=o_plaid_idx)
-    
-    m_year_idx = get_index_fallback(clean_m_year, orig_master_cols, list(master_df_cleaned.columns))
-    if m_year_idx == 0 and len(orig_master_cols) >= 5: m_year_idx = 4 # Default to Column E if year isn't matched
-    chosen_master_year_raw = st.sidebar.selectbox("📅 Master Year Source column (e.g. 2021)", orig_master_cols, index=m_year_idx)
 
-    m_type_idx = get_index_fallback(clean_m_type, orig_master_cols, list(master_df_cleaned.columns))
-    chosen_master_type_raw = st.sidebar.selectbox("🛠️ Master Project Type/Scope Source Column", orig_master_cols, index=m_type_idx)
-
-    # Convert user selection down to background programmatic strings
     master_plaid_col_clean = list(master_df_cleaned.columns)[orig_master_cols.index(chosen_master_plaid_raw)]
     olt_plaid_col_clean = list(olt_df_cleaned.columns)[orig_olt_cols.index(chosen_olt_plaid_raw)]
-    master_year_col_clean = list(master_df_cleaned.columns)[orig_master_cols.index(chosen_master_year_raw)]
-    master_type_col_clean = list(master_df_cleaned.columns)[orig_master_cols.index(chosen_master_type_raw)]
 
     # -----------------------------
     # 📉 Missing Records Analysis
@@ -163,7 +149,7 @@ if master_file and olt_file:
     st.dataframe(missing_records.head(20), use_container_width=True)
 
     # -----------------------------
-    # 🔄 High-Precision Matrix Map Engine
+    # 🔄 High-Precision Positional Matrix Engine
     # -----------------------------
     st.subheader("🔄 Intersecting Column Matrix Map")
     
@@ -180,31 +166,33 @@ if master_file and olt_file:
         "status": ["status", "site status", "rollout status", "state"]
     }
 
-    for orig_olt_col in orig_olt_cols:
+    for c_idx, orig_olt_col in enumerate(orig_olt_cols):
         clean_olt_name = clean_string_normalization(orig_olt_col)
         matched_master_col = None
 
-        # 🚨 OVERRIDE 1: Unique Keys
+        # 🚨 POSITION OVERRIDE 1: Nokia Column B (Index 1) ← Master Column E (Index 4) [Build Year]
+        if c_idx == 1: 
+            if len(orig_master_cols) >= 5:
+                matched_master_col = master_df.columns[4]
+                raw_values = missing_records[matched_master_col].tolist()
+                formatted_years = [f"{str(val).split('.')[0].strip()} build" if pd.notna(val) and str(val).strip() != "" and str(val).lower() != "nan" else "" for val in raw_values]
+                append_df[orig_olt_col] = formatted_years
+                mapped_columns_log.append(f"📅 **Position Linked**: Nokia Column B ('{orig_olt_col}') ← Master Column E ('{matched_master_col}') + ' build'")
+                continue
+
+        # 🚨 POSITION OVERRIDE 2: Nokia Project Type (Column F / Index 5) ← Master Column M (Index 12) [OLT Scope]
+        if "project type" in clean_olt_name or c_idx == 5:
+            if len(orig_master_cols) >= 13:
+                matched_master_col = master_df.columns[12] # Column M is index 12
+                append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
+                mapped_columns_log.append(f"📋 **Position Linked (Direct Copy)**: Nokia Column F ('{orig_olt_col}') ← Master Column M ('{matched_master_col}') [OLT Scope]")
+                continue
+
+        # Force structural tracking linkage for the primary identifier key
         if "plaid" in clean_olt_name:
             matched_master_col = master_plaid_col_clean
-        
-        # 🚨 OVERRIDE 2: Build Year Output (appends " build" text)
-        elif "build year" in clean_olt_name:
-            matched_master_col = master_year_col_clean
-            raw_values = missing_records[matched_master_col].tolist()
-            formatted_years = [f"{str(val).split('.')[0].strip()} build" if pd.notna(val) and str(val).strip() != "" and str(val).lower() != "nan" else "" for val in raw_values]
-            append_df[orig_olt_col] = formatted_years
-            mapped_columns_log.append(f"📅 **Manual Rule Override**: Nokia '{orig_olt_col}' ← Master '{matched_master_col}' + ' build'")
-            continue
 
-        # 🚨 OVERRIDE 3: Project Type Output (Pulls 100% raw unedited data)
-        elif "project type" in clean_olt_name:
-            matched_master_col = master_type_col_clean
-            append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
-            mapped_columns_log.append(f"📋 **Direct Raw Copy**: Nokia '{orig_olt_col}' ← Master Selector Custom Source '{matched_master_col}'")
-            continue
-
-        # Fallback automated mapping checks
+        # Fallback automated name checks for remaining unlinked columns
         if not matched_master_col:
             for clean_m_col in master_df.columns:
                 if clean_string_normalization(clean_m_col) == clean_olt_name and clean_olt_name != "":
