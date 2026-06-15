@@ -18,6 +18,7 @@ def clean_columns(df):
 
 def find_column(columns, keywords):
     for col in columns:
+        # Converts column name to string first to handle numeric headers safely
         col_str = str(col).lower()
         for key in keywords:
             if key.lower() in col_str:
@@ -59,11 +60,11 @@ if master_file and olt_file:
     st.write(f"✅ Detected Master Sheet: `{master_sheet}`")
     st.write(f"✅ Detected Rollout Sheet: `{olt_sheet}`")
 
-    # read
+    # Read data
     master_df = master_xls.parse(master_sheet)
     olt_df = olt_xls.parse(olt_sheet)
 
-    # clean headers
+    # Clean headers
     master_df = clean_columns(master_df)
     olt_df = clean_columns(olt_df)
 
@@ -74,8 +75,6 @@ if master_file and olt_file:
     master_site = find_column(master_df.columns, ["site name"])
 
     olt_plaid = find_column(olt_df.columns, ["plaid"])
-    olt_site = find_column(olt_df.columns, ["site name"])
-
     olt_region = find_column(olt_df.columns, ["region"])
     olt_cards = find_column(olt_df.columns, ["cards"])
 
@@ -86,7 +85,7 @@ if master_file and olt_file:
     st.success("✅ Columns detected successfully")
 
     # -----------------------------
-    # ✅ Normalize keys
+    # ✅ Normalize Keys
     # -----------------------------
     master_df[master_plaid] = master_df[master_plaid].astype(str).str.strip()
     olt_df[olt_plaid] = olt_df[olt_plaid].astype(str).str.strip()
@@ -99,16 +98,11 @@ if master_file and olt_file:
 
     st.subheader("❌ Missing Entries (Data → Rollout)")
     st.write(f"Total Missing: {len(missing_df)}")
-
     st.dataframe(missing_df.head(50))
 
     # -----------------------------
     # ✅ Highlight Output
     # -----------------------------
-    def highlight_missing(row):
-        color = "background-color: red"
-        return [color if x else "" for x in row]
-
     highlight_df = master_df.copy()
     highlight_df["MISSING"] = missing_mask
 
@@ -125,19 +119,21 @@ if master_file and olt_file:
     # -----------------------------
     st.subheader("🔄 Generate New Rows for Rollout")
 
-    mapped = pd.DataFrame()
+    mapped = pd.DataFrame(index=master_df.index)
 
+    # Fallbacks that correctly match the dataframe index lengths
     mapped["Site Name"] = master_df[master_site] if master_site else ""
     mapped["PLAID"] = master_df[master_plaid]
-    mapped["Region"] = master_df.get("Region", "")
-    mapped["Build Year"] = master_df.get("YEAR", "")
+    
+    mapped["Region"] = master_df["Region"] if "Region" in master_df.columns else ""
+    mapped["Build Year"] = master_df["YEAR"] if "YEAR" in master_df.columns else ""
 
     # Optional fields
-    mapped["No. of Cards"] = master_df.get("Number of Cards", "")
-    mapped["Equipment Type"] = master_df.get("Electronics Equipment", "")
-    mapped["Site Status"] = master_df.get("Status", "")
+    mapped["No. of Cards"] = master_df["Number of Cards"] if "Number of Cards" in master_df.columns else ""
+    mapped["Equipment Type"] = master_df["Electronics Equipment"] if "Electronics Equipment" in master_df.columns else ""
+    mapped["Site Status"] = master_df["Status"] if "Status" in master_df.columns else ""
 
-    # only missing
+    # Filter for missing entries only
     new_rows = mapped[missing_mask]
 
     st.write(f"✅ New Rows Ready: {len(new_rows)}")
