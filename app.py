@@ -4,149 +4,137 @@ from io import BytesIO
 
 st.set_page_config(page_title="OLT Tracker Sync Tool", layout="wide")
 
-st.title("📊 OLT Tracker Sync Tool")
-st.write("Compare Master Tracker vs Nokia OLT Tracker, detect missing entries, and generate rollout-ready file.")
+st.title("📊 Nokia OLT Tracker Sync Tool")
+st.write("Upload Master Tracker (Data File) and Nokia OLT Tracker (Rollout File)")
 
-# -----------------------------
-# FILE UPLOAD
-# -----------------------------
-master_file = st.file_uploader("Upload MASTER Tracker File", type=["xlsx"])
-olt_file = st.file_uploader("Upload Nokia OLT Tracker File", type=["xlsx"])
+# Upload files
+master_file = st.file_uploader("Upload Master Tracker Luzon file", type=["xlsx"])
+rollout_file = st.file_uploader("Upload Nokia OLT Tracker file", type=["xlsx"])
 
-# -----------------------------
-# FUNCTIONS
-# -----------------------------
-def load_excel_with_auto_sheet(file):
-    xls = pd.ExcelFile(file)
-    return xls.sheet_names, xls
-
-def get_sheet(xls, selected_sheet):
-    return pd.read_excel(xls, sheet_name=selected_sheet)
-
-def normalize_columns(df):
-    df.columns = df.columns.str.strip().str.replace("\n", " ").str.replace("  ", " ")
-    return df
-
-def detect_column(df, keywords):
-    for col in df.columns:
-        for key in keywords:
-            if key.lower() in col.lower():
-                return col
+def find_sheet(xls, possible_names):
+    for name in xls.sheet_names:
+        if name.strip().lower() in [p.lower() for p in possible_names]:
+            return name
     return None
 
-# -----------------------------
-# MAIN PROCESS
-# -----------------------------
-if master_file and olt_file:
+if master_file and rollout_file:
+    try:
+        # Load Excel files
+        master_xls = pd.ExcelFile(master_file)
+        rollout_xls = pd.ExcelFile(rollout_file)
 
-    # Load available sheets
-    master_sheets, master_xls = load_excel_with_auto_sheet(master_file)
-    olt_sheets, olt_xls = load_excel_with_auto_sheet(olt_file)
+        # Auto-detect sheets ✅
+        master_sheet = find_sheet(master_xls, ["MASTER LIST"])
+        rollout_sheet = find_sheet(rollout_xls, ["Rollout", "ROLL OUT", "ROLLOUT"])
 
-    st.subheader("📑 Select Sheets")
-    master_sheet = st.selectbox("Master Sheet", master_sheets)
-    olt_sheet = st.selectbox("OLT Sheet", olt_sheets)
+        if not master_sheet:
+            st.error("❌ MASTER LIST sheet not found")
+            st.stop()
 
-    master_df = get_sheet(master_xls, master_sheet)
-    olt_df = get_sheet(olt_xls, olt_sheet)
+        if not rollout_sheet:
+            st.error("❌ Rollout sheet not found")
+            st.stop()
 
-    master_df = normalize_columns(master_df)
-    olt_df = normalize_columns(olt_df)
+        st.success(f"✅ Detected sheets: {master_sheet} | {rollout_sheet}")
 
-    st.success("✅ Files Loaded Successfully")
+        master_df = master_xls.parse(master_sheet)
+        rollout_df = rollout_xls.parse(rollout_sheet)
 
-    # -----------------------------
-    # AUTO DETECT KEY COLUMNS
-    # -----------------------------
-    master_plaid = detect_column(master_df, ["PLAID"])
-    master_site = detect_column(master_df, ["Site Name"])
+        # Clean columns
+        master_df.columns = master_df.columns.str.strip()
+        rollout_df.columns = rollout_df.columns.str.strip()
 
-    olt_plaid = detect_column(olt_df, ["PLAID"])
-    olt_site = detect_column(olt_df, ["Site Name"])
+        # ✅ Use REAL columns from your files
+        master_cols = {
+            "site_name": "Site Name",
+            "plaid": "PLAID",
+            "region": "Region",
+            "year": "YEAR",
+            "equipment": "Electronics Equipment",
+            "cards": "Number of Cards",
+            "status": "Status",
+            "survey": "Survey Date",
+            "tssr": "TSSR Approved Date",
+            "installed": "Installed date",
+            "power": "POWERTAPPED DATE",
+            "integration": "Integrated Date",
+            "pat": "PAT'ed",
+            "pac": "PAC'ed",
+            "fac": "FAC'ed"
+        }
 
-    st.write("### 🔍 Detected Columns")
-    st.write(f"Master PLAID: {master_plaid}")
-    st.write(f"Master Site: {master_site}")
-    st.write(f"OLT PLAID: {olt_plaid}")
-    st.write(f"OLT Site: {olt_site}")
+        rollout_cols = {
+            "site_name": "Site Name",
+            "plaid": "PLAID",
+            "region": "Region",
+            "year": "Build Year",
+            "equipment": "Equipment Type",
+            "cards": "No. of Cards",
+            "status": "Site Status",
+            "survey": "Site Survey Actual Date",
+            "tssr": "TSSR Approval Actual Date",
+            "installed": "Installation done Actual Date",
+            "power": "Powertapping done Actual Date",
+            "integration": "Integration done Actual Date",
+            "pat": "PAT Done Actual Date",
+            "pac": "PAC Approval Actual Date",
+            "fac": "FAC Approval Actual Date"
+        }
 
-    if not all([master_plaid, olt_plaid]):
-        st.error("❌ Could not detect PLAID columns automatically.")
-        st.stop()
+        # ✅ Normalize PLAID for matching
+        master_df["PLAID"] = master_df["PLAID"].astype(str).str.strip()
+        rollout_df["PLAID"] = rollout_df["PLAID"].astype(str).str.strip()
 
-    # -----------------------------
-    # FIND MISSING ENTRIES
-    # -----------------------------
-    missing = master_df[~master_df[master_plaid].isin(olt_df[olt_plaid])]
+        rollout_plaids = set(rollout_df["PLAID"])
 
-    st.subheader("🚨 Missing Entries")
-    st.write(f"Total Missing: {len(missing)}")
-    st.dataframe(missing[[master_site, master_plaid]])
+        # ✅ Find missing entries
+        missing_df = master_df[~master_df["PLAID"].isin(rollout_plaids)]
 
-    # -----------------------------
-    # MAPPING ENGINE (STRUCTURE TRANSLATION)
-    # -----------------------------
-    st.subheader("🔄 Mapping to OLT Structure")
+        st.subheader(f"🔍 Missing Entries Found: {len(missing_df)}")
 
-    def map_to_olt(master_df):
+        # ✅ Build NEW rows mapped to rollout structure
+        new_rows = []
 
-        mapped = pd.DataFrame()
+        for _, row in missing_df.iterrows():
+            new_row = {}
 
-        # Core mapping based on your headers
-        mapped["Project Tagging"] = master_df.get("PROJECT or PROGRAM")
-        mapped["Build Year"] = master_df.get("Build Year", master_df.get("YEAR"))
-        mapped["Region"] = master_df.get("Region")
-        mapped["Project Type"] = master_df.get("OLT Scope")
+            for key in rollout_cols:
+                try:
+                    new_row[rollout_cols[key]] = row[master_cols[key]]
+                except:
+                    new_row[rollout_cols[key]] = ""
 
-        mapped["Site Name"] = master_df.get("Site Name")
-        mapped["PLAID"] = master_df.get("PLAID")
+            # Defaults
+            new_row["Project Type"] = "OLT New Build"
+            new_row["GO/STOP"] = "GO"
 
-        mapped["Equipment Type"] = master_df.get("Electronics Equipment")
-        mapped["No. of Cards"] = master_df.get("Number of Cards")
+            new_rows.append(new_row)
 
-        mapped["Site Status"] = master_df.get("Status")
+        new_rows_df = pd.DataFrame(new_rows)
 
-        mapped["Site Survey Actual Date"] = master_df.get("Survey Date")
-        mapped["TSSR Approval Actual Date"] = master_df.get("TSSR Approved Date")
+        # ✅ Combine
+        updated_df = pd.concat([rollout_df, new_rows_df], ignore_index=True)
 
-        mapped["Installation done Actual Date"] = master_df.get("Installed date")
-        mapped["Powertapping done Actual Date"] = master_df.get("POWERTAPPED DATE")
-        mapped["Integration done Actual Date"] = master_df.get("Integrated Date")
+        # ✅ Highlight new rows
+        def highlight_rows(row):
+            if row["PLAID"] in set(missing_df["PLAID"]):
+                return ["background-color: yellow"] * len(row)
+            return [""] * len(row)
 
-        mapped["PAT Done Actual Date"] = master_df.get("PAT")
-        mapped["PAC submission Actual Date"] = master_df.get("PAC")
-        mapped["FAC Submission Actual Date"] = master_df.get("FAC")
+        styled_df = updated_df.style.apply(highlight_rows, axis=1)
 
-        return mapped
+        st.subheader("📋 Updated Rollout Preview")
+        st.dataframe(styled_df, height=500)
 
-    mapped_missing = map_to_olt(missing)
-
-    st.write("Preview of mapped entries:")
-    st.dataframe(mapped_missing)
-
-    # -----------------------------
-    # HIGHLIGHTING OUTPUT
-    # -----------------------------
-    def highlight_missing(df):
-        return df.style.apply(lambda x: ["background-color: yellow"] * len(x), axis=1)
-
-    st.subheader("🟡 Highlighted Missing Entries")
-    st.dataframe(highlight_missing(mapped_missing))
-
-    # -----------------------------
-    # DOWNLOAD OUTPUT FILE
-    # -----------------------------
-    def convert_to_excel(df):
+        # ✅ Download file
         output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Missing Entries')
-        return output.getvalue()
+        updated_df.to_excel(output, index=False)
 
-    excel_file = convert_to_excel(mapped_missing)
+        st.download_button(
+            "⬇ Download Updated Rollout File",
+            data=output.getvalue(),
+            file_name="Updated_OLT_Tracker.xlsx"
+        )
 
-    st.download_button(
-        label="📥 Download Missing Entries",
-        data=excel_file,
-        file_name="missing_olt_entries.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    except Exception as e:
+        st.error(f"❌ Error: {str(e)}")
