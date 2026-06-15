@@ -102,11 +102,9 @@ if master_file and olt_file:
     master_df = master_xls.parse(selected_master_sheet, header=master_header_idx)
     olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
 
-    # Cache true raw spreadsheet headers for rendering final layouts
     orig_master_cols = list(master_df.columns)
     orig_olt_cols = list(olt_df.columns)
 
-    # Run structural cleanups
     master_df_cleaned = clean_columns(master_df.copy())
     olt_df_cleaned = clean_columns(olt_df.copy())
 
@@ -157,7 +155,6 @@ if master_file and olt_file:
     append_df = pd.DataFrame(columns=orig_olt_cols)
     mapped_columns_log = []
 
-    # Mapping dictionary configurations
     alias_map = {
         "project tagging": ["project tagging", "project or program", "project", "program and project tagging", "program project", "tagging"],
         "site name": ["site name", "sitename", "station name", "site description"],
@@ -169,33 +166,9 @@ if master_file and olt_file:
         "status": ["status", "site status", "rollout status", "state", "scope status"]
     }
 
-    # Find the clean identifier for PAC YEAR column inside Master Tracker to evaluate custom business rules
-    clean_master_pac_year_col = find_column(master_df.columns, ["pac year"])
-
     for orig_olt_col in orig_olt_cols:
         clean_olt_name = clean_string_normalization(orig_olt_col)
         matched_master_col = None
-
-        # 🚀 SPECIAL BUSINESS RULE EXCEPTION: Build Year depending on PAC Year
-        if clean_olt_name == "build year" and clean_master_pac_year_col:
-            custom_years = []
-            for _, row in missing_records.iterrows():
-                pac_val = str(row[clean_master_pac_year_col]).strip()
-                
-                # Check if the PAC Year contains a valid year sequence, else default back to standard YEAR mapping
-                if pac_val and pac_val.lower() != "nan" and any(char.isdigit() for char in pac_val):
-                    # Extracted digits to normalize structures like "2021" into "2021 build"
-                    digits = "".join([c for c in pac_val if c.isdigit()])
-                    custom_years.append(f"{digits} build" if len(digits) >= 4 else f"{pac_val} build")
-                else:
-                    # Fallback to general master year columns if PAC column is empty
-                    m_year_col = find_column(master_df.columns, ["year", "build year"])
-                    fallback_val = str(row[m_year_col]).strip() if m_year_col else ""
-                    custom_years.append(fallback_val if fallback_val.lower() != "nan" else "")
-            
-            append_df[orig_olt_col] = custom_years
-            mapped_columns_log.append(f"⚙️ Applied Custom Transformation Rule: OLT **'Build Year'** dynamically mapped from Master *'PAC Year'* fields.")
-            continue
 
         # 1. Exact Match Test
         for clean_m_col in master_df.columns:
@@ -215,14 +188,32 @@ if master_file and olt_file:
                 if matched_master_col:
                     break
 
-        # Explicit Safety Link for key primary data strings
         if "plaid" in clean_olt_name:
             matched_master_col = master_plaid_col_clean
 
         # Assign values to the frame matrix
         if matched_master_col:
-            append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
-            mapped_columns_log.append(f"🔗 Linked OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'*")
+            raw_list = missing_records[matched_master_col].tolist()
+            
+            # 🔥 Suffix Injection Logic specifically for 'Build Year'
+            if "build year" in clean_olt_name:
+                formatted_years = []
+                for val in raw_list:
+                    if pd.isna(val) or str(val).strip() == "" or str(val).lower() == "nan":
+                        formatted_years.append("")
+                    else:
+                        # Drop floating zeros (e.g. 2021.0 -> 2021)
+                        clean_val = str(val).split('.')[0].strip()
+                        # If it doesn't already contain the word 'build', append it
+                        if "build" not in clean_val.lower():
+                            formatted_years.append(f"{clean_val} Build")
+                        else:
+                            formatted_years.append(clean_val)
+                append_df[orig_olt_col] = formatted_years
+                mapped_columns_log.append(f"🔗 Linked OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'* [Suffix Formatted]")
+            else:
+                append_df[orig_olt_col] = raw_list
+                mapped_columns_log.append(f"🔗 Linked OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'*")
         else:
             append_df[orig_olt_col] = [""] * len(missing_records)
 
