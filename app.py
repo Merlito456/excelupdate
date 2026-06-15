@@ -203,9 +203,27 @@ if master_file and olt_file:
         # 🚨 POSITION OVERRIDE 4: Nokia Site Status (Column V / Index 21) ← Master Column L (Index 11) [Scope Status]
         if "site status" in clean_olt_name or c_idx == 21:
             if len(orig_master_cols) >= 12:
-                matched_master_col = master_df.columns[11] # Column L is index 11
+                matched_master_col = master_df.columns[11]
                 append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
                 mapped_columns_log.append(f"📡 **Position Linked (Direct Copy)**: Nokia Column V ('{orig_olt_col}') ← Master Column L ('{matched_master_col}') [Scope status]")
+                continue
+
+        # 🚨 POSITION OVERRIDE 5: Nokia Site Survey Actual Date (Column AO / Index 40) ← Master Column X (Index 23) [Survey Date]
+        if "site survey actual date" in clean_olt_name or c_idx == 40:
+            if len(orig_master_cols) >= 24:
+                matched_master_col = master_df.columns[23] # Column X is index 23
+                raw_dates = missing_records[matched_master_col].tolist()
+                
+                # Format cleaning loop to extract clean string elements out of dynamic datetime types
+                cleaned_dates = []
+                for d_val in raw_dates:
+                    if pd.isna(d_val) or str(d_val).lower() == "nan":
+                        cleaned_dates.append("")
+                    else:
+                        cleaned_dates.append(str(d_val).split(" ")[0])
+                
+                append_df[orig_olt_col] = cleaned_dates
+                mapped_columns_log.append(f"📆 **Position Linked (Date Sanitized)**: Nokia Column AO ('{orig_olt_col}') ← Master Column X ('{matched_master_col}') [Survey Date]")
                 continue
 
         # Force key tracking structural link
