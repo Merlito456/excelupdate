@@ -98,15 +98,15 @@ if master_file and olt_file:
     master_header_idx = st.sidebar.number_input("Master Header Row Index (1-based)", min_value=1, value=auto_master_idx + 1) - 1
     olt_header_idx = st.sidebar.number_input("OLT Header Row Index (1-based)", min_value=1, value=auto_olt_idx + 1) - 1
 
-    # Parse structural dataframes
+    # Parse dataframes
     master_df = master_xls.parse(selected_master_sheet, header=master_header_idx)
     olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
 
-    # Save absolute original raw headers for matching index outputs
+    # Save original headers for indexing matching profiles
     orig_master_cols = list(master_df.columns)
     orig_olt_cols = list(olt_df.columns)
 
-    # Run background cleanups
+    # Clean schemas for normalization evaluation
     master_df_cleaned = clean_columns(master_df.copy())
     olt_df_cleaned = clean_columns(olt_df.copy())
 
@@ -150,7 +150,7 @@ if master_file and olt_file:
     st.dataframe(missing_records.head(50), use_container_width=True)
 
     # -----------------------------
-    # 🔄 Dynamic Index Mapping Engine
+    # 🔄 Smart Fuzzy Alias Mapping Engine
     # -----------------------------
     st.subheader("🔄 Intersecting Column Matrix Map")
     
@@ -158,8 +158,9 @@ if master_file and olt_file:
     mapped_columns_log = []
 
     alias_map = {
-        "project tagging": ["project tagging", "project or program", "project", "program and project tagging", "program project", "tagging"],
+        "project tagging": ["project tagging", "project or program", "project", "program and project tagging", "program project", "tagging", "olt scope", "project type"],
         "site name": ["site name", "sitename", "station name", "site description"],
+        "build year": ["build year", "year", "target year", "deployment year"],
         "clustering": ["clustering", "territory", "area", "cluster"],
         "province": ["province", "territory", "area", "region"],
         "cards": ["cards", "number of cards", "no of cards", "card count"],
@@ -167,14 +168,12 @@ if master_file and olt_file:
         "status": ["status", "site status", "rollout status", "state", "scope status"]
     }
 
-    # Process row values sequentially across index arrays
     for c_idx, orig_olt_col in enumerate(orig_olt_cols):
         clean_olt_name = clean_string_normalization(orig_olt_col)
         matched_master_col = None
 
-        # 🚨 HARD POSITION ROADMAP: Rule for Column B (Index 1) of the Nokia OLT Tracker
+        # 🚨 HARD POSITION ROADMAP: Rule for Column B (Index 1) of Nokia Tracker (Build Year)
         if c_idx == 1: 
-            # Force extract directly from Column E (Index 4) of Master Tracker
             if len(orig_master_cols) >= 5:
                 matched_master_col = master_df.columns[4]
                 raw_values = missing_records[matched_master_col].tolist()
@@ -191,17 +190,19 @@ if master_file and olt_file:
                 mapped_columns_log.append(f"🎯 **Hard Position Fixed**: Nokia Column B ('{orig_olt_col}') mapped directly from Master Column E ('{matched_master_col}') + ' build'")
                 continue
 
-        # Force structural override linkage for the primary key
+        # Force key structural linkage rules
         if "plaid" in clean_olt_name:
             matched_master_col = master_plaid_col_clean
 
-        # General loop execution for all other columns
+        # General loop matching sequence for columns
         if not matched_master_col:
+            # 1. Exact Name Check
             for clean_m_col in master_df.columns:
                 if clean_string_normalization(clean_m_col) == clean_olt_name and clean_olt_name != "":
                     matched_master_col = clean_m_col
                     break
             
+            # 2. Fuzzy Alias Check (Includes OLT Scope/Project Type mapping rules)
             if not matched_master_col and clean_olt_name != "":
                 for base_key, variations in alias_map.items():
                     if any(v in clean_olt_name for v in variations):
@@ -213,7 +214,7 @@ if master_file and olt_file:
                     if matched_master_col:
                         break
 
-        # Apply final allocations
+        # Populate output data grid matrix
         if matched_master_col:
             append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
             mapped_columns_log.append(f"🔗 Linked OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'*")
