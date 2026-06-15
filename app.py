@@ -9,7 +9,7 @@ st.set_page_config(page_title="OLT Tracker Tool", layout="wide")
 st.title("📊 Master Tracker → Nokia OLT Rollout Tool")
 
 # -----------------------------
-# ✅ Core Helper Functions
+# ✅ Production Helper Functions
 # -----------------------------
 
 def clean_string_normalization(val) -> str:
@@ -98,19 +98,18 @@ if master_file and olt_file:
     master_header_idx = st.sidebar.number_input("Master Header Row Index (1-based)", min_value=1, value=auto_master_idx + 1) - 1
     olt_header_idx = st.sidebar.number_input("OLT Header Row Index (1-based)", min_value=1, value=auto_olt_idx + 1) - 1
 
-    # Parse structural frames
+    # Parse structural dataframes
     master_df = master_xls.parse(selected_master_sheet, header=master_header_idx)
     olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
 
-    # Save absolute original raw headers for rebuilding the output file later
+    # Cache true raw spreadsheet headers for rendering final layouts
     orig_master_cols = list(master_df.columns)
     orig_olt_cols = list(olt_df.columns)
 
-    # Cleaned schemas for background mapping evaluation
+    # Run structural cleanups
     master_df_cleaned = clean_columns(master_df.copy())
     olt_df_cleaned = clean_columns(olt_df.copy())
 
-    # Find the critical linking anchors
     clean_m_plaid = find_column(master_df_cleaned.columns, ["plaid"])
     clean_o_plaid = find_column(olt_df_cleaned.columns, ["plaid"])
 
@@ -126,26 +125,22 @@ if master_file and olt_file:
     o_plaid_idx = get_index_fallback(clean_o_plaid, orig_olt_cols, list(olt_df_cleaned.columns))
     chosen_olt_plaid_raw = st.sidebar.selectbox("OLT PLAID Column Identifier", orig_olt_cols, index=o_plaid_idx)
 
-    # Map selected user boundaries down to operational strings
     master_plaid_col_clean = list(master_df_cleaned.columns)[orig_master_cols.index(chosen_master_plaid_raw)]
     olt_plaid_col_clean = list(olt_df_cleaned.columns)[orig_olt_cols.index(chosen_olt_plaid_raw)]
 
     # -----------------------------
-    # 📉 Missing Records Analysis Block
+    # 📉 Missing Records Analysis
     # -----------------------------
 
     st.write(f"📂 **Active Master Sheet:** `{selected_master_sheet}` (Header Row: {master_header_idx + 1})")
     st.write(f"📂 **Active OLT Sheet:** `{selected_olt_sheet}` (Header Row: {olt_header_idx + 1})")
 
-    # Set cleaned column names onto dataframes for processing
     master_df.columns = master_df_cleaned.columns
     olt_df.columns = olt_df_cleaned.columns
 
-    # Standardize primary linking frames
     master_df[master_plaid_col_clean] = master_df[master_plaid_col_clean].astype(str).str.strip()
     olt_df[olt_plaid_col_clean] = olt_df[olt_plaid_col_clean].astype(str).str.strip()
 
-    # Isolate valid rows
     master_clean_df = master_df[master_df[master_plaid_col_clean].str.lower() != "nan"].copy()
     missing_mask = ~master_clean_df[master_plaid_col_clean].isin(olt_df[olt_plaid_col_clean])
     missing_records = master_clean_df[missing_mask].copy()
@@ -155,53 +150,59 @@ if master_file and olt_file:
     st.dataframe(missing_records.head(50), use_container_width=True)
 
     # -----------------------------
-    # 🔄 Auto-Intersection Mapping Sequence
+    # 🔄 Smart Fuzzy Alias Mapping Engine
     # -----------------------------
     st.subheader("🔄 Intersecting Column Matrix Map")
     
-    # Initialize compilation dataframe matching the exact original structure layout of Nokia OLT
     append_df = pd.DataFrame(columns=orig_olt_cols)
-    
-    # Track which mappings were discovered automatically for logging purposes
     mapped_columns_log = []
 
-    # Map indices back and forth automatically based on match logic
+    # Deep cross-examination dictionary mapping aliases to catch naming changes
+    alias_map = {
+        "project": ["project", "program and project tagging", "program project", "tagging"],
+        "site name": ["site name", "sitename", "station name", "site description"],
+        "build year": ["build year", "year", "target year", "deployment year"],
+        "cards": ["cards", "number of cards", "no of cards", "card count"],
+        "equipment type": ["equipment type", "electronics equipment", "equipment model", "chassis type"],
+        "status": ["status", "site status", "rollout status", "state"]
+    }
+
     for orig_olt_col in orig_olt_cols:
         clean_olt_name = clean_string_normalization(orig_olt_col)
-        
-        # Look for this exact normalized text header inside the Master Tracker dataframe schema
         matched_master_col = None
+
+        # 1. Primary Test: Check for exact string structural intersection matches
         for clean_m_col in master_df.columns:
             if clean_string_normalization(clean_m_col) == clean_olt_name and clean_olt_name != "":
                 matched_master_col = clean_m_col
                 break
         
-        # If found, migrate all data records cleanly across tables
+        # 2. Secondary Test: Run Fuzzy Alias check if primary exact search yielded no result
+        if not matched_master_col and clean_olt_name != "":
+            for base_key, variations in alias_map.items():
+                # If the OLT column matches an alias category
+                if any(v in clean_olt_name for v in variations):
+                    # Look for a matching variation in the Master column spaces
+                    for clean_m_col in master_df.columns:
+                        clean_m_norm = clean_string_normalization(clean_m_col)
+                        if any(v in clean_m_norm for v in variations):
+                            matched_master_col = clean_m_col
+                            break
+                if matched_master_col:
+                    break
+
+        # Hardcode link safety anchor for the primary lookup key
+        if "plaid" in clean_olt_name:
+            matched_master_col = master_plaid_col_clean
+
+        # Populate column matrix based on discovery results
         if matched_master_col:
             append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
-            mapped_columns_log.append(f"🔗 Appending **'{orig_olt_col}'** from Master field *'{matched_master_col}'*")
+            mapped_columns_log.append(f"🔗 Linked OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'*")
         else:
-            # Check for standard telecom schema aliases if exact name didn't match
-            if "plaid" in clean_olt_name:
-                append_df[orig_olt_col] = missing_records[master_plaid_col_clean].tolist()
-                mapped_columns_log.append(f"🔗 Appending **'{orig_olt_col}'** from Master primary identifier")
-            elif "build year" in clean_olt_name and "year" in master_df.columns:
-                append_df[orig_olt_col] = missing_records["year"].tolist()
-                mapped_columns_log.append(f"🔗 Appending **'{orig_olt_col}'** from Master field *'YEAR'*")
-            elif "cards" in clean_olt_name and "expansion" not in clean_olt_name and "number of cards" in master_df.columns:
-                append_df[orig_olt_col] = missing_records["number of cards"].tolist()
-                mapped_columns_log.append(f"🔗 Appending **'{orig_olt_col}'** from Master field *'Number of Cards'*")
-            elif "equipment type" in clean_olt_name and "expansion" not in clean_olt_name and "electronics equipment" in master_df.columns:
-                append_df[orig_olt_col] = missing_records["electronics equipment"].tolist()
-                mapped_columns_log.append(f"🔗 Appending **'{orig_olt_col}'** from Master field *'Electronics Equipment'*")
-            elif "site status" in clean_olt_name and "status" in master_df.columns:
-                append_df[orig_olt_col] = missing_records["status"].tolist()
-                mapped_columns_log.append(f"🔗 Appending **'{orig_olt_col}'** from Master field *'Status'*")
-            else:
-                # No data link match found: populate blank spacer column values
-                append_df[orig_olt_col] = [""] * len(missing_records)
+            append_df[orig_olt_col] = [""] * len(missing_records)
 
-    with st.expander("👀 View auto-detected column connection mapping"):
+    with st.expander("👀 View automated column connection mapping mapping audit trail"):
         for log in mapped_columns_log:
             st.markdown(log)
 
@@ -214,27 +215,23 @@ if master_file and olt_file:
     if len(append_df) > 0:
         if st.button("🚀 Merge and Append into OLT Spreadsheet"):
             try:
-                # Read structural layout tracking and load directly with openpyxl 
                 wb = openpyxl.load_workbook(io.BytesIO(olt_bytes))
                 ws = wb[selected_olt_sheet]
                 
-                # Append rows safely right after the last occupied row index
                 start_row = ws.max_row + 1
                 
                 for r_idx, row_data in enumerate(append_df.values, start=start_row):
                     for c_idx, value in enumerate(row_data, start=1):
-                        # Avoid rendering raw 'nan' values as text in the spreadsheet
                         if pd.isna(value) or str(value).lower() == "nan":
                             ws.cell(row=r_idx, column=c_idx, value="")
                         else:
                             ws.cell(row=r_idx, column=c_idx, value=value)
                 
-                # Output memory byte stream buffer
                 out_buffer = io.BytesIO()
                 wb.save(out_buffer)
                 out_buffer.seek(0)
                 
-                st.success(f"🎉 Successfully matched, formatted, and appended {len(append_df)} records directly to the rollout file!")
+                st.success(f"🎉 Successfully mapped, formatted, and appended {len(append_df)} records directly into the Nokia OLT Tracker sheet!")
                 
                 st.download_button(
                     label="⬇️ Download Updated Nokia OLT Tracker File",
