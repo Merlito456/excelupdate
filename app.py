@@ -251,11 +251,21 @@ if master_file and olt_file:
         # 🚨 OVERRIDE 9: Nokia PAT done Actual Date (Column CB / Index 79) ← Master Column AF (Index 31) [Pat'ed]
         if "pat done actual date" in clean_olt_name or c_idx == 79:
             if len(orig_master_cols) >= 32:
-                matched_master_col = master_df.columns[31] # Column AF is index 31
+                matched_master_col = master_df.columns[31]
                 raw_dates = missing_records[matched_master_col].tolist()
                 cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
                 append_df[orig_olt_col] = cleaned_dates
-                mapped_columns_log.append(f"📋 **Position Linked (Date Sanitized)**: Nokia Column CB ('{orig_olt_col}') ← Master Column AF ('{matched_master_col}') [Pat'ed]")
+                mapped_columns_log.append(f"📋 **Position Linked**: Nokia Column CB ('{orig_olt_col}') ← Master Column AF ('{matched_master_col}') [Pat'ed]")
+                continue
+
+        # 🚨 OVERRIDE 10: Nokia PAC Approval done Actual Date (Column CM / Index 90) ← Master Column AI (Index 34) [PAC'ed]
+        if "pac approval done actual date" in clean_olt_name or c_idx == 90:
+            if len(orig_master_cols) >= 35:
+                matched_master_col = master_df.columns[34] # Column AI is index 34
+                raw_dates = missing_records[matched_master_col].tolist()
+                cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
+                append_df[orig_olt_col] = cleaned_dates
+                mapped_columns_log.append(f"📜 **Position Linked (Date Sanitized)**: Nokia Column CM ('{orig_olt_col}') ← Master Column AI ('{matched_master_col}') [PAC'ed]")
                 continue
 
         # Force key tracking structural link
