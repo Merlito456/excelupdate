@@ -221,11 +221,21 @@ if master_file and olt_file:
         # 🚨 POSITION OVERRIDE 6: Nokia Installation done Actual Date (Column BD / Index 55) ← Master Column AA (Index 26) [Installed date]
         if "installation done actual date" in clean_olt_name or c_idx == 55:
             if len(orig_master_cols) >= 27:
-                matched_master_col = master_df.columns[26] # Column AA is index 26
+                matched_master_col = master_df.columns[26]
                 raw_dates = missing_records[matched_master_col].tolist()
                 cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
                 append_df[orig_olt_col] = cleaned_dates
-                mapped_columns_log.append(f"🏗️ **Position Linked (Date Sanitized)**: Nokia Column BD ('{orig_olt_col}') ← Master Column AA ('{matched_master_col}') [Installed date]")
+                mapped_columns_log.append(f"🏗️ **Position Linked**: Nokia Column BD ('{orig_olt_col}') ← Master Column AA ('{matched_master_col}') [Installed date]")
+                continue
+
+        # 🚨 POSITION OVERRIDE 7: Nokia Powertapping done Actual Date (Column BK / Index 62) ← Master Column AC (Index 28) [Powertapped date]
+        if "powertapping done actual date" in clean_olt_name or c_idx == 62:
+            if len(orig_master_cols) >= 29:
+                matched_master_col = master_df.columns[28] # Column AC is index 28
+                raw_dates = missing_records[matched_master_col].tolist()
+                cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
+                append_df[orig_olt_col] = cleaned_dates
+                mapped_columns_log.append(f"⚡ **Position Linked (Date Sanitized)**: Nokia Column BK ('{orig_olt_col}') ← Master Column AC ('{matched_master_col}') [Powertapped date]")
                 continue
 
         # Force key tracking structural link
