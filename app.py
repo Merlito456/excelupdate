@@ -241,11 +241,21 @@ if master_file and olt_file:
         # 🚨 OVERRIDE 8: Nokia Integration done Actual Date (Column BS / Index 70) ← Master Column AD (Index 29) [Integrated date]
         if "integration done actual date" in clean_olt_name or c_idx == 70:
             if len(orig_master_cols) >= 30:
-                matched_master_col = master_df.columns[29] # Column AD is index 29
+                matched_master_col = master_df.columns[29]
                 raw_dates = missing_records[matched_master_col].tolist()
                 cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
                 append_df[orig_olt_col] = cleaned_dates
-                mapped_columns_log.append(f"🌐 **Position Linked (Date Sanitized)**: Nokia Column BS ('{orig_olt_col}') ← Master Column AD ('{matched_master_col}') [Integrated date]")
+                mapped_columns_log.append(f"🌐 **Position Linked**: Nokia Column BS ('{orig_olt_col}') ← Master Column AD ('{matched_master_col}') [Integrated date]")
+                continue
+
+        # 🚨 OVERRIDE 9: Nokia PAT done Actual Date (Column CB / Index 79) ← Master Column AF (Index 31) [Pat'ed]
+        if "pat done actual date" in clean_olt_name or c_idx == 79:
+            if len(orig_master_cols) >= 32:
+                matched_master_col = master_df.columns[31] # Column AF is index 31
+                raw_dates = missing_records[matched_master_col].tolist()
+                cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
+                append_df[orig_olt_col] = cleaned_dates
+                mapped_columns_log.append(f"📋 **Position Linked (Date Sanitized)**: Nokia Column CB ('{orig_olt_col}') ← Master Column AF ('{matched_master_col}') [Pat'ed]")
                 continue
 
         # Force key tracking structural link
