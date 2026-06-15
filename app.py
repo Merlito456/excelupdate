@@ -98,19 +98,19 @@ if master_file and olt_file:
     master_header_idx = st.sidebar.number_input("Master Header Row Index (1-based)", min_value=1, value=auto_master_idx + 1) - 1
     olt_header_idx = st.sidebar.number_input("OLT Header Row Index (1-based)", min_value=1, value=auto_olt_idx + 1) - 1
 
-    # Parse initial DataFrames
+    # Parse dataframes
     master_df = master_xls.parse(selected_master_sheet, header=master_header_idx)
     olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
 
-    # 🚨 NOISE FILTRATION: Dropping phantom columns from the target OLT file layout
+    # Noise filtration for target ghost columns
     olt_df = olt_df.loc[:, ~olt_df.columns.astype(str).str.startswith('Unnamed:')]
     olt_df = olt_df.loc[:, olt_df.columns.notna() & (olt_df.columns != "")]
     
-    # Cache verified layout headers
+    # Save original headers
     orig_master_cols = list(master_df.columns)
     orig_olt_cols = list(olt_df.columns)
 
-    # Clean schemas for evaluation processing loops
+    # Standard clean background frames
     master_df_cleaned = clean_columns(master_df.copy())
     olt_df_cleaned = clean_columns(olt_df.copy())
 
@@ -165,7 +165,6 @@ if master_file and olt_file:
         "clustering": ["clustering", "territory", "area", "cluster"],
         "province": ["province", "territory", "area", "region"],
         "cards": ["cards", "number of cards", "no of cards", "card count"],
-        "equipment type": ["equipment type", "electronics equipment", "equipment model", "chassis type"],
         "status": ["status", "site status", "rollout status", "state"]
     }
 
@@ -173,7 +172,6 @@ if master_file and olt_file:
         clean_olt_name = clean_string_normalization(orig_olt_col)
         matched_master_col = None
 
-        # Skip matching mechanics entirely if name represents ghost headers
         if clean_olt_name == "" or "solution track" in clean_olt_name or clean_olt_name == "track":
             continue
 
@@ -195,11 +193,19 @@ if master_file and olt_file:
                 mapped_columns_log.append(f"📋 **Position Linked (Direct Copy)**: Nokia Column F ('{orig_olt_col}') ← Master Column M ('{matched_master_col}') [OLT Scope]")
                 continue
 
-        # Force structural tracking linkage for key identifier
+        # 🚨 POSITION OVERRIDE 3: Nokia Equipment Type (Column N / Index 13) ← Master Column N (Index 13) [Electronics Equipment]
+        if "equipment type" in clean_olt_name or c_idx == 13:
+            if len(orig_master_cols) >= 14:
+                matched_master_col = master_df.columns[13] # Column N is index 13
+                append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
+                mapped_columns_log.append(f"⚙️ **Position Linked (Direct Copy)**: Nokia Column N ('{orig_olt_col}') ← Master Column N ('{matched_master_col}') [Electronics Equipment]")
+                continue
+
+        # Force key tracking structural link
         if "plaid" in clean_olt_name:
             matched_master_col = master_plaid_col_clean
 
-        # Fallback automated verification scanner
+        # Fallback loop name analyzer
         if not matched_master_col:
             for clean_m_col in master_df.columns:
                 if clean_string_normalization(clean_m_col) == clean_olt_name and clean_olt_name != "":
@@ -224,7 +230,7 @@ if master_file and olt_file:
         else:
             append_df[orig_olt_col] = [""] * len(missing_records)
 
-    # Explicit final layout cleanup rule
+    # Exclude formatting column anomalies from data grid preview frames
     append_df = append_df.loc[:, ~append_df.columns.astype(str).str.contains('track', case=False)]
 
     with st.expander("👀 View automated column connection mapping mapping audit trail"):
