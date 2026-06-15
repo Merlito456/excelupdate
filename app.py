@@ -31,12 +31,24 @@ def find_dynamic_header_row(xls: pd.ExcelFile, sheet_name: str, lookahead_rows: 
     return 0 
 
 def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalizes DataFrame column names dynamically."""
+    """Normalizes and safely deduplicates DataFrame column names dynamically."""
     cleaned = []
+    seen_counts = {}
+    
     for col in df.columns:
         col_str = str(col).strip().replace("\n", " ").replace("\xa0", " ")
         col_str = col_str.translate(str.maketrans('', '', string.punctuation))
-        cleaned.append(" ".join(col_str.split()))
+        final_name = " ".join(col_str.split())
+        
+        # Deduplication tracking sequence
+        if final_name in seen_counts:
+            seen_counts[final_name] += 1
+            final_name = f"{final_name}_{seen_counts[final_name]}"
+        else:
+            seen_counts[final_name] = 0
+            
+        cleaned.append(final_name)
+        
     df.columns = cleaned
     return df
 
@@ -96,11 +108,11 @@ if master_file and olt_file:
     master_df = master_xls.parse(selected_master_sheet, header=master_header_idx)
     olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
 
-    # Backup the exact original columns for selection drop-downs before cleaning changes them
+    # Backup original columns safely for select-boxes
     orig_master_cols = list(master_df.columns)
     orig_olt_cols = list(olt_df.columns)
 
-    # Standardize schemas for processing
+    # Standardize schemas and safely remove duplicates
     master_df = clean_columns(master_df)
     olt_df = clean_columns(olt_df)
 
@@ -109,7 +121,6 @@ if master_file and olt_file:
     auto_m_site = find_column(master_df.columns, ["site name"])
     auto_o_plaid = find_column(olt_df.columns, ["plaid"])
 
-    # Map back to original indices to populate selection boxes
     def get_index_fallback(clean_target, original_list, clean_list):
         if clean_target in clean_list:
             return clean_list.index(clean_target)
@@ -126,7 +137,7 @@ if master_file and olt_file:
     o_plaid_idx = get_index_fallback(auto_o_plaid, orig_olt_cols, list(olt_df.columns))
     chosen_olt_plaid_raw = st.sidebar.selectbox("OLT PLAID Column", orig_olt_cols, index=o_plaid_idx)
 
-    # Re-map clean pointers based on chosen manual/auto targets
+    # Re-map clean pointers based on dropdown parameters
     master_plaid = list(master_df.columns)[orig_master_cols.index(chosen_master_plaid_raw)]
     master_site = list(master_df.columns)[orig_master_cols.index(chosen_master_site_raw)]
     olt_plaid = list(olt_df.columns)[orig_olt_cols.index(chosen_olt_plaid_raw)]
@@ -142,7 +153,7 @@ if master_file and olt_file:
     master_df[master_plaid] = master_df[master_plaid].astype(str).str.strip()
     olt_df[olt_plaid] = olt_df[olt_plaid].astype(str).str.strip()
 
-    # Discrepancy Tracking (Exclude missing / nan rows)
+    # Discrepancy Tracking (Exclude missing / nan entries)
     master_clean_df = master_df[master_df[master_plaid].str.lower() != "nan"]
     missing_mask = ~master_clean_df[master_plaid].isin(olt_df[olt_plaid])
     missing_df = master_clean_df[missing_mask].copy()
