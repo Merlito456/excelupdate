@@ -211,19 +211,21 @@ if master_file and olt_file:
         # 🚨 POSITION OVERRIDE 5: Nokia Site Survey Actual Date (Column AO / Index 40) ← Master Column X (Index 23) [Survey Date]
         if "site survey actual date" in clean_olt_name or c_idx == 40:
             if len(orig_master_cols) >= 24:
-                matched_master_col = master_df.columns[23] # Column X is index 23
+                matched_master_col = master_df.columns[23]
                 raw_dates = missing_records[matched_master_col].tolist()
-                
-                # Format cleaning loop to extract clean string elements out of dynamic datetime types
-                cleaned_dates = []
-                for d_val in raw_dates:
-                    if pd.isna(d_val) or str(d_val).lower() == "nan":
-                        cleaned_dates.append("")
-                    else:
-                        cleaned_dates.append(str(d_val).split(" ")[0])
-                
+                cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
                 append_df[orig_olt_col] = cleaned_dates
-                mapped_columns_log.append(f"📆 **Position Linked (Date Sanitized)**: Nokia Column AO ('{orig_olt_col}') ← Master Column X ('{matched_master_col}') [Survey Date]")
+                mapped_columns_log.append(f"📆 **Position Linked**: Nokia Column AO ('{orig_olt_col}') ← Master Column X ('{matched_master_col}') [Survey Date]")
+                continue
+
+        # 🚨 POSITION OVERRIDE 6: Nokia Installation done Actual Date (Column BD / Index 55) ← Master Column AA (Index 26) [Installed date]
+        if "installation done actual date" in clean_olt_name or c_idx == 55:
+            if len(orig_master_cols) >= 27:
+                matched_master_col = master_df.columns[26] # Column AA is index 26
+                raw_dates = missing_records[matched_master_col].tolist()
+                cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
+                append_df[orig_olt_col] = cleaned_dates
+                mapped_columns_log.append(f"🏗️ **Position Linked (Date Sanitized)**: Nokia Column BD ('{orig_olt_col}') ← Master Column AA ('{matched_master_col}') [Installed date]")
                 continue
 
         # Force key tracking structural link
