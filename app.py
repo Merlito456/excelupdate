@@ -10,15 +10,20 @@ st.title("📊 Master Tracker → Nokia OLT Rollout Tool")
 # -----------------------------
 
 def clean_columns(df):
-    df.columns = [
-        str(col).strip().replace("\n", " ").replace("  ", " ")
-        for col in df.columns
-    ]
+    # Safely converts every header to a string, strips whitespace, and removes hidden non-breaking spaces (\xa0) and linebreaks
+    cleaned = []
+    for col in df.columns:
+        col_str = str(col).strip().replace("\n", " ").replace("\xa0", " ")
+        # Collapse multiple spaces into a single space
+        col_str = " ".join(col_str.split())
+        cleaned.append(col_str)
+    
+    df.columns = cleaned
     return df
 
 def find_column(columns, keywords):
     for col in columns:
-        # Converts column name to string first to handle numeric headers safely
+        # Extra safety layer: cast to string and lowercase
         col_str = str(col).lower()
         for key in keywords:
             if key.lower() in col_str:
@@ -54,8 +59,8 @@ if master_file and olt_file:
     master_xls = pd.ExcelFile(master_file)
     olt_xls = pd.ExcelFile(olt_file)
 
-    master_sheet = detect_sheet(master_xls, ["master"])
-    olt_sheet = detect_sheet(olt_xls, ["rollout"])
+    master_sheet = detect_sheet(master_xls, ["master", "luzon"])
+    olt_sheet = detect_sheet(olt_xls, ["rollout", "nokia", "olt"])
 
     st.write(f"✅ Detected Master Sheet: `{master_sheet}`")
     st.write(f"✅ Detected Rollout Sheet: `{olt_sheet}`")
@@ -64,7 +69,7 @@ if master_file and olt_file:
     master_df = master_xls.parse(master_sheet)
     olt_df = olt_xls.parse(olt_sheet)
 
-    # Clean headers
+    # Clean headers (Crucial: Overwrites the old uncleaned headers)
     master_df = clean_columns(master_df)
     olt_df = clean_columns(olt_df)
 
@@ -75,14 +80,12 @@ if master_file and olt_file:
     master_site = find_column(master_df.columns, ["site name"])
 
     olt_plaid = find_column(olt_df.columns, ["plaid"])
-    olt_region = find_column(olt_df.columns, ["region"])
-    olt_cards = find_column(olt_df.columns, ["cards"])
 
     if not master_plaid or not olt_plaid:
-        st.error("❌ Cannot detect PLAID column automatically.")
+        st.error(f"❌ Cannot detect PLAID column automatically. Found Master Plaid: '{master_plaid}', OLT Plaid: '{olt_plaid}'")
         st.stop()
 
-    st.success("✅ Columns detected successfully")
+    st.success("✅ Main linking columns detected successfully")
 
     # -----------------------------
     # ✅ Normalize Keys
@@ -115,25 +118,24 @@ if master_file and olt_file:
     st.dataframe(styled)
 
     # -----------------------------
-    # ✅ Mapping (Data → Rollout Structure)
+    # ✅ Dynamic Mapping (Data → Rollout Structure)
     # -----------------------------
     st.subheader("🔄 Generate New Rows for Rollout")
 
     mapped = pd.DataFrame(index=master_df.index)
 
-    # Fallbacks that correctly match the dataframe index lengths
+    # Clean mappings targeting exact clean match keys found in your provided headers
     mapped["Site Name"] = master_df[master_site] if master_site else ""
     mapped["PLAID"] = master_df[master_plaid]
     
+    # Safe lookups for secondary attributes matching your header schema
     mapped["Region"] = master_df["Region"] if "Region" in master_df.columns else ""
-    mapped["Build Year"] = master_df["YEAR"] if "YEAR" in master_df.columns else ""
-
-    # Optional fields
+    mapped["Build Year"] = master_df["Build Year"] if "Build Year" in master_df.columns else (master_df["YEAR"] if "YEAR" in master_df.columns else "")
     mapped["No. of Cards"] = master_df["Number of Cards"] if "Number of Cards" in master_df.columns else ""
     mapped["Equipment Type"] = master_df["Electronics Equipment"] if "Electronics Equipment" in master_df.columns else ""
     mapped["Site Status"] = master_df["Status"] if "Status" in master_df.columns else ""
 
-    # Filter for missing entries only
+    # Filter out only the missing rows
     new_rows = mapped[missing_mask]
 
     st.write(f"✅ New Rows Ready: {len(new_rows)}")
