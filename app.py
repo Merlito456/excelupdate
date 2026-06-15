@@ -3,6 +3,7 @@ import pandas as pd
 import string
 import io
 import openpyxl
+from openpyxl.styles import PatternFill
 
 st.set_page_config(page_title="OLT Tracker Tool", layout="wide")
 
@@ -323,21 +324,34 @@ if master_file and olt_file:
     st.dataframe(append_df.head(100), use_container_width=True)
 
     # -----------------------------
-    # 💾 FIXED: In-Memory Workbook Appending Engine
+    # 💾 FIXED: In-Memory Workbook Appending Engine (With Blue Highlight)
     # -----------------------------
     if len(append_df) > 0:
         if st.button("🚀 Merge and Append into OLT Spreadsheet"):
             try:
-                base_olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
-                final_combined_df = pd.concat([base_olt_df, append_df], ignore_index=True)
+                # Load the workbook from the bytes of the uploaded OLT file
+                wb = openpyxl.load_workbook(io.BytesIO(olt_bytes))
+                ws = wb[selected_olt_sheet]
                 
+                # Define light blue fill
+                blue_fill = PatternFill(start_color="ADD8E6", end_color="ADD8E6", fill_type="solid")
+                
+                # Append rows to the worksheet
+                for _, row_data in append_df.iterrows():
+                    new_row = [row_data[col] for col in orig_olt_cols]
+                    ws.append(new_row)
+                    
+                    # Apply blue fill to the newly appended row
+                    current_row_idx = ws.max_row
+                    for cell in ws[current_row_idx]:
+                        cell.fill = blue_fill
+                
+                # Save to buffer
                 out_buffer = io.BytesIO()
-                with pd.ExcelWriter(out_buffer, engine='openpyxl') as writer:
-                    final_combined_df.to_excel(writer, sheet_name=selected_olt_sheet, index=False)
-                
+                wb.save(out_buffer)
                 out_buffer.seek(0)
                 
-                st.success(f"🎉 Successfully merged and processed {len(append_df)} records!")
+                st.success(f"🎉 Successfully merged and processed {len(append_df)} records with blue highlights!")
                 st.download_button(
                     label="⬇️ Download Updated Nokia OLT Tracker File",
                     data=out_buffer.getvalue(),
