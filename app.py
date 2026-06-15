@@ -9,7 +9,7 @@ st.set_page_config(page_title="OLT Tracker Tool", layout="wide")
 st.title("📊 Master Tracker → Nokia OLT Rollout Tool")
 
 # -----------------------------
-# ✅ Production Helper Functions
+# ✅ Core Helper Functions
 # -----------------------------
 
 def clean_string_normalization(val) -> str:
@@ -98,21 +98,20 @@ if master_file and olt_file:
     master_header_idx = st.sidebar.number_input("Master Header Row Index (1-based)", min_value=1, value=auto_master_idx + 1) - 1
     olt_header_idx = st.sidebar.number_input("OLT Header Row Index (1-based)", min_value=1, value=auto_olt_idx + 1) - 1
 
-    # Parse structural frames
+    # Parse structural dataframes
     master_df = master_xls.parse(selected_master_sheet, header=master_header_idx)
     olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
 
-    # Save absolute original raw headers
+    # Save absolute original raw headers for matching index outputs
     orig_master_cols = list(master_df.columns)
     orig_olt_cols = list(olt_df.columns)
 
-    # Run structural cleanups
+    # Run background cleanups
     master_df_cleaned = clean_columns(master_df.copy())
     olt_df_cleaned = clean_columns(olt_df.copy())
 
     clean_m_plaid = find_column(master_df_cleaned.columns, ["plaid"])
     clean_o_plaid = find_column(olt_df_cleaned.columns, ["plaid"])
-    clean_m_year = find_column(master_df_cleaned.columns, ["year", "build year"])
 
     def get_index_fallback(clean_target, original_list, clean_list):
         if clean_target in clean_list:
@@ -126,13 +125,8 @@ if master_file and olt_file:
     o_plaid_idx = get_index_fallback(clean_o_plaid, orig_olt_cols, list(olt_df_cleaned.columns))
     chosen_olt_plaid_raw = st.sidebar.selectbox("OLT PLAID Column Identifier", orig_olt_cols, index=o_plaid_idx)
 
-    # New Dropdown override specifically for finding the "Year" column (Column E)
-    m_year_idx = get_index_fallback(clean_m_year, orig_master_cols, list(master_df_cleaned.columns))
-    chosen_master_year_raw = st.sidebar.selectbox("Master Year Column Override (Col E)", orig_master_cols, index=m_year_idx)
-
     master_plaid_col_clean = list(master_df_cleaned.columns)[orig_master_cols.index(chosen_master_plaid_raw)]
     olt_plaid_col_clean = list(olt_df_cleaned.columns)[orig_olt_cols.index(chosen_olt_plaid_raw)]
-    master_year_col_clean = list(master_df_cleaned.columns)[orig_master_cols.index(chosen_master_year_raw)]
 
     # -----------------------------
     # 📉 Missing Records Analysis
@@ -156,7 +150,7 @@ if master_file and olt_file:
     st.dataframe(missing_records.head(50), use_container_width=True)
 
     # -----------------------------
-    # 🔄 Smart Fuzzy Alias Mapping Engine
+    # 🔄 Dynamic Index Mapping Engine
     # -----------------------------
     st.subheader("🔄 Intersecting Column Matrix Map")
     
@@ -166,7 +160,6 @@ if master_file and olt_file:
     alias_map = {
         "project tagging": ["project tagging", "project or program", "project", "program and project tagging", "program project", "tagging"],
         "site name": ["site name", "sitename", "station name", "site description"],
-        "build year": ["build year", "year", "target year", "deployment year"],
         "clustering": ["clustering", "territory", "area", "cluster"],
         "province": ["province", "territory", "area", "region"],
         "cards": ["cards", "number of cards", "no of cards", "card count"],
@@ -174,25 +167,41 @@ if master_file and olt_file:
         "status": ["status", "site status", "rollout status", "state", "scope status"]
     }
 
-    for orig_olt_col in orig_olt_cols:
+    # Process row values sequentially across index arrays
+    for c_idx, orig_olt_col in enumerate(orig_olt_cols):
         clean_olt_name = clean_string_normalization(orig_olt_col)
         matched_master_col = None
 
-        # Force structural override linkage for specific telecom keys
+        # 🚨 HARD POSITION ROADMAP: Rule for Column B (Index 1) of the Nokia OLT Tracker
+        if c_idx == 1: 
+            # Force extract directly from Column E (Index 4) of Master Tracker
+            if len(orig_master_cols) >= 5:
+                matched_master_col = master_df.columns[4]
+                raw_values = missing_records[matched_master_col].tolist()
+                
+                formatted_years = []
+                for val in raw_values:
+                    if pd.isna(val) or str(val).strip() == "" or str(val).lower() == "nan":
+                        formatted_years.append("")
+                    else:
+                        clean_yr = str(val).split('.')[0].strip()
+                        formatted_years.append(f"{clean_yr} build")
+                
+                append_df[orig_olt_col] = formatted_years
+                mapped_columns_log.append(f"🎯 **Hard Position Fixed**: Nokia Column B ('{orig_olt_col}') mapped directly from Master Column E ('{matched_master_col}') + ' build'")
+                continue
+
+        # Force structural override linkage for the primary key
         if "plaid" in clean_olt_name:
             matched_master_col = master_plaid_col_clean
-        elif "build year" in clean_olt_name:
-            matched_master_col = master_year_col_clean
 
-        # If it's not explicitly overridden, use standard alias cross-examination mapping
+        # General loop execution for all other columns
         if not matched_master_col:
-            # 1. Exact Match Test
             for clean_m_col in master_df.columns:
                 if clean_string_normalization(clean_m_col) == clean_olt_name and clean_olt_name != "":
                     matched_master_col = clean_m_col
                     break
             
-            # 2. Advanced Fuzzy Fallback Search
             if not matched_master_col and clean_olt_name != "":
                 for base_key, variations in alias_map.items():
                     if any(v in clean_olt_name for v in variations):
@@ -204,24 +213,10 @@ if master_file and olt_file:
                     if matched_master_col:
                         break
 
-        # Assign values to the frame matrix with text suffix processing rules applied
+        # Apply final allocations
         if matched_master_col:
-            raw_values = missing_records[matched_master_col].tolist()
-            
-            # ✨ TRANSFORM RULE: Force apply "XXXX build" logic onto Build Year output column destination
-            if "build year" in clean_olt_name or matched_master_col == master_year_col_clean:
-                formatted_years = []
-                for val in raw_values:
-                    if pd.isna(val) or str(val).strip() == "" or str(val).lower() == "nan":
-                        formatted_years.append("")
-                    else:
-                        clean_yr = str(val).split('.')[0].strip()
-                        formatted_years.append(f"{clean_yr} build")
-                append_df[orig_olt_col] = formatted_years
-                mapped_columns_log.append(f"⚙️ Transformed OLT **'{orig_olt_col}'** ← Master Year Column Override *'{matched_master_col}'* + adding ' build' suffix")
-            else:
-                append_df[orig_olt_col] = raw_values
-                mapped_columns_log.append(f"🔗 Linked OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'*")
+            append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
+            mapped_columns_log.append(f"🔗 Linked OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'*")
         else:
             append_df[orig_olt_col] = [""] * len(missing_records)
 
