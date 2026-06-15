@@ -303,7 +303,6 @@ if master_file and olt_file:
         # Map findings into structural columns
         if matched_master_col:
             append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
-            mapped_columns_log.append(f"🔗 Linked OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'*")
         else:
             append_df[orig_olt_col] = [""] * len(missing_records)
 
@@ -318,27 +317,25 @@ if master_file and olt_file:
     st.dataframe(append_df.head(100), use_container_width=True)
 
     # -----------------------------
-    # 💾 In-Memory Workbook Appending Engine
+    # 💾 FIXED: In-Memory Workbook Appending Engine
     # -----------------------------
     if len(append_df) > 0:
         if st.button("🚀 Merge and Append into OLT Spreadsheet"):
             try:
-                wb = openpyxl.load_workbook(io.BytesIO(olt_bytes))
-                ws = wb[selected_olt_sheet]
+                # 1. Parse existing data directly via pandas (bypassing openpyxl structure errors)
+                base_olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
                 
-                start_row = ws.max_row + 1
-                for r_idx, row_data in enumerate(append_df.values, start=start_row):
-                    for c_idx, value in enumerate(row_data, start=1):
-                        if pd.isna(value) or str(value).lower() == "nan":
-                            ws.cell(row=r_idx, column=c_idx, value="")
-                        else:
-                            ws.cell(row=r_idx, column=c_idx, value=value)
+                # 2. Append new data to the existing dataframe
+                final_combined_df = pd.concat([base_olt_df, append_df], ignore_index=True)
                 
+                # 3. Create output stream using ExcelWriter
                 out_buffer = io.BytesIO()
-                wb.save(out_buffer)
+                with pd.ExcelWriter(out_buffer, engine='openpyxl') as writer:
+                    final_combined_df.to_excel(writer, sheet_name=selected_olt_sheet, index=False)
+                
                 out_buffer.seek(0)
                 
-                st.success(f"🎉 Successfully mapped, formatted, and appended {len(append_df)} records directly into the Nokia OLT Tracker sheet!")
+                st.success(f"🎉 Successfully merged and processed {len(append_df)} records!")
                 st.download_button(
                     label="⬇️ Download Updated Nokia OLT Tracker File",
                     data=out_buffer.getvalue(),
@@ -346,4 +343,4 @@ if master_file and olt_file:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             except Exception as err:
-                st.error(f"Failed to append entries inside workbook structure: {err}")
+                st.error(f"Failed to process file: {err}")
