@@ -174,6 +174,14 @@ if master_file and olt_file:
         if clean_olt_name == "" or "solution track" in clean_olt_name or clean_olt_name == "track":
             continue
 
+        # 🚨 OVERRIDE: Nokia Clustering (Column D / Index 3) ← Master Column G (Index 6)
+        if "clustering" in clean_olt_name or c_idx == 3:
+            if len(orig_master_cols) >= 7:
+                matched_master_col = master_df.columns[6]
+                append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
+                mapped_columns_log.append(f"🌍 **Position Linked**: Nokia Column D ('{orig_olt_col}') ← Master Column G ('{matched_master_col}') [TERRITORY/CLUSTERING]")
+                continue
+
         # 🚨 OVERRIDE 1: Nokia Column B (Index 1) ← Master Column E (Index 4) [Build Year]
         if c_idx == 1: 
             if len(orig_master_cols) >= 5:
@@ -271,7 +279,7 @@ if master_file and olt_file:
         # 🚨 OVERRIDE 11: Nokia FAC Approval done Actual Date (Column DC / Index 106) ← Master Column AJ (Index 35) [FAC'ed]
         if "fac approval done actual date" in clean_olt_name or c_idx == 106:
             if len(orig_master_cols) >= 36:
-                matched_master_col = master_df.columns[35] # Column AJ is index 35
+                matched_master_col = master_df.columns[35] 
                 raw_dates = missing_records[matched_master_col].tolist()
                 cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
                 append_df[orig_olt_col] = cleaned_dates
@@ -322,13 +330,9 @@ if master_file and olt_file:
     if len(append_df) > 0:
         if st.button("🚀 Merge and Append into OLT Spreadsheet"):
             try:
-                # 1. Parse existing data directly via pandas (bypassing openpyxl structure errors)
                 base_olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
-                
-                # 2. Append new data to the existing dataframe
                 final_combined_df = pd.concat([base_olt_df, append_df], ignore_index=True)
                 
-                # 3. Create output stream using ExcelWriter
                 out_buffer = io.BytesIO()
                 with pd.ExcelWriter(out_buffer, engine='openpyxl') as writer:
                     final_combined_df.to_excel(writer, sheet_name=selected_olt_sheet, index=False)
