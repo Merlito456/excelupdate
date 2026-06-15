@@ -98,15 +98,13 @@ if master_file and olt_file:
     master_header_idx = st.sidebar.number_input("Master Header Row Index (1-based)", min_value=1, value=auto_master_idx + 1) - 1
     olt_header_idx = st.sidebar.number_input("OLT Header Row Index (1-based)", min_value=1, value=auto_olt_idx + 1) - 1
 
-    # Parse structural dataframes
+    # Parse dataframes
     master_df = master_xls.parse(selected_master_sheet, header=master_header_idx)
     olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
 
-    # Cache true raw spreadsheet headers for rendering final layouts
     orig_master_cols = list(master_df.columns)
     orig_olt_cols = list(olt_df.columns)
 
-    # Run structural cleanups
     master_df_cleaned = clean_columns(master_df.copy())
     olt_df_cleaned = clean_columns(olt_df.copy())
 
@@ -157,45 +155,45 @@ if master_file and olt_file:
     append_df = pd.DataFrame(columns=orig_olt_cols)
     mapped_columns_log = []
 
-    # Deep cross-examination dictionary mapping aliases to catch naming changes
+    # Expanded explicit lookup paths to match your exact sheet variances
     alias_map = {
-        "project": ["project", "program and project tagging", "program project", "tagging"],
+        "project tagging": ["project tagging", "project or program", "project", "program and project tagging", "program project", "tagging"],
         "site name": ["site name", "sitename", "station name", "site description"],
         "build year": ["build year", "year", "target year", "deployment year"],
+        "clustering": ["clustering", "territory", "area", "cluster"],
+        "province": ["province", "territory", "area", "region"],
         "cards": ["cards", "number of cards", "no of cards", "card count"],
         "equipment type": ["equipment type", "electronics equipment", "equipment model", "chassis type"],
-        "status": ["status", "site status", "rollout status", "state"]
+        "status": ["status", "site status", "rollout status", "state", "scope status"]
     }
 
     for orig_olt_col in orig_olt_cols:
         clean_olt_name = clean_string_normalization(orig_olt_col)
         matched_master_col = None
 
-        # 1. Primary Test: Check for exact string structural intersection matches
+        # 1. Exact Match Test
         for clean_m_col in master_df.columns:
             if clean_string_normalization(clean_m_col) == clean_olt_name and clean_olt_name != "":
                 matched_master_col = clean_m_col
                 break
         
-        # 2. Secondary Test: Run Fuzzy Alias check if primary exact search yielded no result
+        # 2. Advanced Fuzzy Fallback Search
         if not matched_master_col and clean_olt_name != "":
             for base_key, variations in alias_map.items():
-                # If the OLT column matches an alias category
                 if any(v in clean_olt_name for v in variations):
-                    # Look for a matching variation in the Master column spaces
                     for clean_m_col in master_df.columns:
                         clean_m_norm = clean_string_normalization(clean_m_col)
-                        if any(v in clean_m_norm for v in variations):
+                        if any(v == clean_m_norm for v in variations):
                             matched_master_col = clean_m_col
                             break
                 if matched_master_col:
                     break
 
-        # Hardcode link safety anchor for the primary lookup key
+        # Explicit Safety Link for key primary data strings
         if "plaid" in clean_olt_name:
             matched_master_col = master_plaid_col_clean
 
-        # Populate column matrix based on discovery results
+        # Assign values to the frame matrix
         if matched_master_col:
             append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
             mapped_columns_log.append(f"🔗 Linked OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'*")
