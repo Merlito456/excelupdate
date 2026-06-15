@@ -174,13 +174,11 @@ if master_file and olt_file:
         if clean_olt_name == "" or "solution track" in clean_olt_name or clean_olt_name == "track":
             continue
 
-        # 🚨 OVERRIDE: Nokia Clustering (Column D / Index 3) ← Master Column G (Index 6)
+        # 🚨 OVERRIDE: Nokia Clustering (Column D / Index 3) - Set to Blank
         if "clustering" in clean_olt_name or c_idx == 3:
-            if len(orig_master_cols) >= 7:
-                matched_master_col = master_df.columns[6]
-                append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
-                mapped_columns_log.append(f"🌍 **Position Linked**: Nokia Column D ('{orig_olt_col}') ← Master Column G ('{matched_master_col}') [TERRITORY/CLUSTERING]")
-                continue
+            append_df[orig_olt_col] = [""] * len(missing_records)
+            mapped_columns_log.append(f"🌍 **Position Linked**: Nokia Column D ('{orig_olt_col}') ← [INTENTIONALLY BLANK]")
+            continue
 
         # 🚨 OVERRIDE 1: Nokia Column B (Index 1) ← Master Column E (Index 4) [Build Year]
         if c_idx == 1: 
