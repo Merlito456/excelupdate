@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import string
 import io
+import openpyxl
 
 st.set_page_config(page_title="OLT Tracker Tool", layout="wide")
 
@@ -40,7 +41,6 @@ def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
         col_str = col_str.translate(str.maketrans('', '', string.punctuation))
         final_name = " ".join(col_str.split())
         
-        # Deduplication tracking sequence
         if final_name in seen_counts:
             seen_counts[final_name] += 1
             final_name = f"{final_name}_{seen_counts[final_name]}"
@@ -75,6 +75,7 @@ master_file = st.file_uploader("Upload Master Tracker (Data File)", type=["xlsx"
 olt_file = st.file_uploader("Upload Nokia OLT Tracker (Rollout)", type=["xlsx"])
 
 if master_file and olt_file:
+    # Read bytes to enable multiple parsing operations safely
     master_bytes = master_file.read()
     olt_bytes = olt_file.read()
     
@@ -82,41 +83,33 @@ if master_file and olt_file:
     olt_xls = pd.ExcelFile(io.BytesIO(olt_bytes))
 
     # -----------------------------
-    # 🛠️ Sidebar Configuration & Controls (Override Panels)
+    # 🛠️ Sidebar Configuration & Controls
     # -----------------------------
     st.sidebar.header("🛠️ Configuration Controls")
     
-    # Sheet Selection
     auto_master_sheet = detect_sheet(master_xls, ["master", "luzon", "file"])
     auto_olt_sheet = detect_sheet(olt_xls, ["rollout", "nokia", "olt", "summary", "inventory"])
     
     selected_master_sheet = st.sidebar.selectbox("Master Sheet Name", master_xls.sheet_names, index=master_xls.sheet_names.index(auto_master_sheet))
     selected_olt_sheet = st.sidebar.selectbox("OLT Sheet Name", olt_xls.sheet_names, index=olt_xls.sheet_names.index(auto_olt_sheet))
 
-    # Header Row Index Selection
     auto_master_idx = find_dynamic_header_row(master_xls, selected_master_sheet)
     auto_olt_idx = find_dynamic_header_row(olt_xls, selected_olt_sheet)
     
     master_header_idx = st.sidebar.number_input("Master Header Row Index (1-based)", min_value=1, value=auto_master_idx + 1) - 1
     olt_header_idx = st.sidebar.number_input("OLT Header Row Index (1-based)", min_value=1, value=auto_olt_idx + 1) - 1
 
-    # -----------------------------
-    # 🏃 Execution Engine
-    # -----------------------------
-    
-    # Parse DataFrames using targeted structural offsets
+    # Parse initial structures
     master_df = master_xls.parse(selected_master_sheet, header=master_header_idx)
     olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
 
-    # Backup original columns safely for select-boxes
     orig_master_cols = list(master_df.columns)
     orig_olt_cols = list(olt_df.columns)
 
-    # Standardize schemas and safely remove duplicates
     master_df = clean_columns(master_df)
     olt_df = clean_columns(olt_df)
 
-    # Attempt Auto Mapping
+    # Column Mapping Selectors
     auto_m_plaid = find_column(master_df.columns, ["plaid"])
     auto_m_site = find_column(master_df.columns, ["site name"])
     auto_o_plaid = find_column(olt_df.columns, ["plaid"])
@@ -137,63 +130,111 @@ if master_file and olt_file:
     o_plaid_idx = get_index_fallback(auto_o_plaid, orig_olt_cols, list(olt_df.columns))
     chosen_olt_plaid_raw = st.sidebar.selectbox("OLT PLAID Column", orig_olt_cols, index=o_plaid_idx)
 
-    # Re-map clean pointers based on dropdown parameters
     master_plaid = list(master_df.columns)[orig_master_cols.index(chosen_master_plaid_raw)]
     master_site = list(master_df.columns)[orig_master_cols.index(chosen_master_site_raw)]
     olt_plaid = list(olt_df.columns)[orig_olt_cols.index(chosen_olt_plaid_raw)]
 
     # -----------------------------
-    # 📉 Core Business Automation Flow
+    # 📉 Core Extraction Logic
     # -----------------------------
 
     st.write(f"📂 **Active Master Sheet:** `{selected_master_sheet}` (Header Row: {master_header_idx + 1})")
     st.write(f"📂 **Active OLT Sheet:** `{selected_olt_sheet}` (Header Row: {olt_header_idx + 1})")
 
-    # Vectorized String Normalization
     master_df[master_plaid] = master_df[master_plaid].astype(str).str.strip()
     olt_df[olt_plaid] = olt_df[olt_plaid].astype(str).str.strip()
 
-    # Discrepancy Tracking (Exclude missing / nan entries)
     master_clean_df = master_df[master_df[master_plaid].str.lower() != "nan"]
     missing_mask = ~master_clean_df[master_plaid].isin(olt_df[olt_plaid])
     missing_df = master_clean_df[missing_mask].copy()
 
-    st.subheader("❌ Missing Entries (Data → Rollout)")
-    st.write(f"Total Missing Rows Isolated: **{len(missing_df)}**")
+    st.subheader("❌ Isolated Missing Entries")
+    st.write(f"Total Missing Rows Found: **{len(missing_df)}**")
     st.dataframe(missing_df.head(100), use_container_width=True)
 
-    # Generation & Mapping Matrix
-    st.subheader("🔄 Generated Data Structure Mapping")
-    mapped = pd.DataFrame(index=master_clean_df.index)
-
-    mapped["Site Name"] = master_clean_df[master_site] if master_site else ""
-    mapped["PLAID"] = master_clean_df[master_plaid]
-    mapped["Region"] = master_clean_df["Region"] if "Region" in master_clean_df.columns else ""
+    # -----------------------------
+    # 🔄 Build Appending Rows Dataframe
+    # -----------------------------
+    # This acts as a blueprint structured exactly like your targeted OLT tracker schema
+    append_df = pd.DataFrame(columns=orig_olt_cols)
     
-    if "Build Year" in master_clean_df.columns:
-        mapped["Build Year"] = master_clean_df["Build Year"]
-    elif "YEAR" in master_clean_df.columns:
-        mapped["Build Year"] = master_clean_df["YEAR"]
+    # Extract data safely from Master to assign to the specific OLT layout
+    # Use fallback mapping to match your structural targets
+    m_site_col = chosen_master_site_raw
+    m_plaid_col = chosen_master_plaid_raw
+
+    # Prepare specific data lists
+    site_names = missing_df[master_site].tolist() if master_site else [""] * len(missing_df)
+    plaids = missing_df[master_plaid].tolist()
+    
+    regions = missing_df["Region"].tolist() if "Region" in missing_df.columns else [""] * len(missing_df)
+    
+    if "Build Year" in missing_df.columns:
+        years = missing_df["Build Year"].tolist()
+    elif "YEAR" in missing_df.columns:
+        years = missing_df["YEAR"].tolist()
     else:
-        mapped["Build Year"] = ""
+        years = [""] * len(missing_df)
 
-    mapped["No. of Cards"] = master_clean_df["Number of Cards"] if "Number of Cards" in master_clean_df.columns else ""
-    mapped["Equipment Type"] = master_clean_df["Electronics Equipment"] if "Electronics Equipment" in master_clean_df.columns else ""
-    mapped["Site Status"] = master_clean_df["Status"] if "Status" in master_clean_df.columns else ""
+    cards = missing_df["Number of Cards"].tolist() if "Number of Cards" in missing_df.columns else [""] * len(missing_df)
+    eq_type = missing_df["Electronics Equipment"].tolist() if "Electronics Equipment" in missing_df.columns else [""] * len(missing_df)
+    status = missing_df["Status"].tolist() if "Status" in missing_df.columns else [""] * len(missing_df)
 
-    new_rows = mapped[missing_mask]
-    st.dataframe(new_rows.head(100), use_container_width=True)
+    # Insert lists dynamically back to OLT column spaces using exact name strings from raw headers
+    for col in append_df.columns:
+        clean_name = clean_string_normalization(col)
+        if "site name" in clean_name:
+            append_df[col] = site_names
+        elif "plaid" in clean_name:
+            append_df[col] = plaids
+        elif "region" in clean_name:
+            append_df[col] = regions
+        elif "build year" in clean_name:
+            append_df[col] = years
+        elif "cards" in clean_name and "expansion" not in clean_name:
+            append_df[col] = cards
+        elif "equipment type" in clean_name and "expansion" not in clean_name:
+            append_df[col] = eq_type
+        elif "status" in clean_name:
+            append_df[col] = status
+        else:
+            append_df[col] = "" # Blank spacer values for remaining rollout metrics
 
-    # In-Memory Workbook Packaging & Serialization
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        missing_df.to_excel(writer, sheet_name="Missing_Records", index=False)
-        new_rows.to_excel(writer, sheet_name="Formatted_Upload_Rows", index=False)
-    
-    st.markdown("---")
-    st.download_button(
-        label="⬇️ Download Discrepancy Reports (.xlsx)",
-        data=buffer.getvalue(),
-        file_name="OLT_Missing_Entries.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    st.subheader("📋 Rows to be Appended (Nokia Layout Format)")
+    st.dataframe(append_df.head(100), use_container_width=True)
+
+    # -----------------------------
+    # 💾 In-Memory Appending Work Engine 
+    # -----------------------------
+    if len(append_df) > 0:
+        if st.button("🚀 Merge and Append into OLT Spreadsheet"):
+            try:
+                # Load existing workbook with openpyxl to maintain historical styling blocks
+                wb = openpyxl.load_workbook(io.BytesIO(olt_bytes))
+                ws = wb[selected_olt_sheet]
+                
+                # Determine append entry start bounds using the 1-based index setup
+                start_row = ws.max_row + 1
+                
+                # Write data records sequentially row by row
+                for r_idx, row_data in enumerate(append_df.values, start=start_row):
+                    for c_idx, value in enumerate(row_data, start=1):
+                        ws.cell(row=r_idx, column=c_idx, value=value)
+                
+                # Output memory byte stream buffer
+                out_buffer = io.BytesIO()
+                wb.save(out_buffer)
+                out_buffer.seek(0)
+                
+                st.success(f"🎉 Successfully merged {len(append_df)} rows directly to the base of tracking dataset!")
+                
+                st.download_button(
+                    label="⬇️ Download Updated Nokia OLT Tracker File",
+                    data=out_buffer.getvalue(),
+                    file_name=f"Updated_{olt_file.name}",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            except Exception as err:
+                st.error(f"Failed to append entries inside workbook structure: {err}")
+    else:
+        st.info("ℹ️ All target systems match perfectly. No unique entries found to update.")
