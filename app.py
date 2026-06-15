@@ -6,7 +6,6 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 
 st.set_page_config(page_title="OLT Inventory & Tracker Studio", page_icon="📊", layout="wide")
 
-# App Header
 st.title("📊 OLT Inventory & Tracker Studio")
 st.markdown("Upload your datasets below to generate an optimized, duplicate-free Master Tracker and automated OLT Inventory Summary.")
 
@@ -23,33 +22,52 @@ def load_data(uploaded_file):
     if uploaded_file is not None:
         filename = uploaded_file.name.lower()
         
-        # Safe explicit check based on lowercase extensions
+        # Scenario A: Excel Formats (Binary, don't use string encodings)
         if filename.endswith('.xlsx') or filename.endswith('.xls'):
-            # Read everything cleanly first, then figure out correct header index dynamically
             df_raw = pd.read_excel(uploaded_file, header=None)
-        else:
-            df_raw = pd.read_csv(uploaded_file, header=None)
             
-        # Dynamically locate the true header row by scanning for your essential columns
-        header_row_idx = 0
-        for idx, row in df_raw.iterrows():
-            row_str = [str(x).strip().lower() for x in row.values]
-            # Look for specific markers present in your data sheets
-            if 'plaid' in row_str or 'project tagging' in row_str or 'project or program' in row_str:
-                header_row_idx = idx
-                break
-                
-        # Re-read or re-assign data framing shifting past empty visual metric rows
-        if filename.endswith('.xlsx') or filename.endswith('.xls'):
+            header_row_idx = 0
+            for idx, row in df_raw.iterrows():
+                row_str = [str(x).strip().lower() for x in row.values]
+                if 'plaid' in row_str or 'project tagging' in row_str or 'project or program' in row_str:
+                    header_row_idx = idx
+                    break
+                    
             uploaded_file.seek(0)
             return pd.read_excel(uploaded_file, header=header_row_idx)
+            
+        # Scenario B: CSV Formats (Text based, requires fallback encodings)
         else:
+            encodings_to_try = ['utf-8', 'cp1252', 'latin1', 'utf-8-sig']
+            df_raw = None
+            successful_encoding = None
+            
+            for enc in encodings_to_try:
+                try:
+                    uploaded_file.seek(0)
+                    df_raw = pd.read_csv(uploaded_file, header=None, encoding=enc)
+                    successful_encoding = enc
+                    break
+                except (UnicodeDecodeError, LookupError):
+                    continue
+            
+            if df_raw is None:
+                raise UnicodeDecodeError("Could not decode the CSV file using standard character sets (UTF-8, CP1252, Latin1).")
+                
+            header_row_idx = 0
+            for idx, row in df_raw.iterrows():
+                row_str = [str(x).strip().lower() for x in row.values]
+                if 'plaid' in row_str or 'project tagging' in row_str or 'project or program' in row_str:
+                    header_row_idx = idx
+                    break
+            
             uploaded_file.seek(0)
-            return pd.read_csv(uploaded_file, header=header_row_idx)
+            return pd.read_csv(uploaded_file, header=header_row_idx, encoding=successful_encoding)
+            
     return None
 
 if tracker_file and add_file:
-    with st.spinner("Processing files and aligning data columns..."):
+    with st.spinner("Processing files and adjusting data encodings safely..."):
         try:
             df_tracker = load_data(tracker_file)
             df_add = load_data(add_file)
@@ -242,7 +260,7 @@ if tracker_file and add_file:
 
     wb.save(output_buffer)
     
-    # Download
+    # Download Presentation Tier
     st.markdown("---")
     st.subheader("📥 Download Generated Sheets")
     st.download_button(
