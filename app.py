@@ -102,9 +102,11 @@ if master_file and olt_file:
     master_df = master_xls.parse(selected_master_sheet, header=master_header_idx)
     olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
 
+    # Save absolute original raw headers
     orig_master_cols = list(master_df.columns)
     orig_olt_cols = list(olt_df.columns)
 
+    # Run structural cleanups
     master_df_cleaned = clean_columns(master_df.copy())
     olt_df_cleaned = clean_columns(olt_df.copy())
 
@@ -188,31 +190,28 @@ if master_file and olt_file:
                 if matched_master_col:
                     break
 
+        # Explicit Safety Link for key primary data strings
         if "plaid" in clean_olt_name:
             matched_master_col = master_plaid_col_clean
 
         # Assign values to the frame matrix
         if matched_master_col:
-            raw_list = missing_records[matched_master_col].tolist()
+            raw_values = missing_records[matched_master_col].tolist()
             
-            # 🔥 Suffix Injection Logic specifically for 'Build Year'
+            # ✨ TRANSFORM RULE: Apply "XXXX build" logic to the Build Year column mapping
             if "build year" in clean_olt_name:
                 formatted_years = []
-                for val in raw_list:
+                for val in raw_values:
                     if pd.isna(val) or str(val).strip() == "" or str(val).lower() == "nan":
                         formatted_years.append("")
                     else:
-                        # Drop floating zeros (e.g. 2021.0 -> 2021)
-                        clean_val = str(val).split('.')[0].strip()
-                        # If it doesn't already contain the word 'build', append it
-                        if "build" not in clean_val.lower():
-                            formatted_years.append(f"{clean_val} Build")
-                        else:
-                            formatted_years.append(clean_val)
+                        # Clean up pandas decimal artifacts (e.g., converting 2021.0 float to string '2021')
+                        clean_yr = str(val).split('.')[0].strip()
+                        formatted_years.append(f"{clean_yr} build")
                 append_df[orig_olt_col] = formatted_years
-                mapped_columns_log.append(f"🔗 Linked OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'* [Suffix Formatted]")
+                mapped_columns_log.append(f"⚙️ Transformed OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'* + adding ' build' suffix")
             else:
-                append_df[orig_olt_col] = raw_list
+                append_df[orig_olt_col] = raw_values
                 mapped_columns_log.append(f"🔗 Linked OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'*")
         else:
             append_df[orig_olt_col] = [""] * len(missing_records)
