@@ -164,8 +164,7 @@ if master_file and olt_file:
         "site name": ["site name", "sitename", "station name", "site description"],
         "clustering": ["clustering", "territory", "area", "cluster"],
         "province": ["province", "territory", "area", "region"],
-        "cards": ["cards", "number of cards", "no of cards", "card count"],
-        "status": ["status", "site status", "rollout status", "state"]
+        "cards": ["cards", "number of cards", "no of cards", "card count"]
     }
 
     for c_idx, orig_olt_col in enumerate(orig_olt_cols):
@@ -196,9 +195,17 @@ if master_file and olt_file:
         # 🚨 POSITION OVERRIDE 3: Nokia Equipment Type (Column N / Index 13) ← Master Column N (Index 13) [Electronics Equipment]
         if "equipment type" in clean_olt_name or c_idx == 13:
             if len(orig_master_cols) >= 14:
-                matched_master_col = master_df.columns[13] # Column N is index 13
+                matched_master_col = master_df.columns[13]
                 append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
                 mapped_columns_log.append(f"⚙️ **Position Linked (Direct Copy)**: Nokia Column N ('{orig_olt_col}') ← Master Column N ('{matched_master_col}') [Electronics Equipment]")
+                continue
+
+        # 🚨 POSITION OVERRIDE 4: Nokia Site Status (Column V / Index 21) ← Master Column L (Index 11) [Scope Status]
+        if "site status" in clean_olt_name or c_idx == 21:
+            if len(orig_master_cols) >= 12:
+                matched_master_col = master_df.columns[11] # Column L is index 11
+                append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
+                mapped_columns_log.append(f"📡 **Position Linked (Direct Copy)**: Nokia Column V ('{orig_olt_col}') ← Master Column L ('{matched_master_col}') [Scope status]")
                 continue
 
         # Force key tracking structural link
