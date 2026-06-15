@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import string
 
 st.set_page_config(page_title="OLT Tracker Tool", layout="wide")
 
@@ -10,10 +11,14 @@ st.title("📊 Master Tracker → Nokia OLT Rollout Tool")
 # -----------------------------
 
 def clean_columns(df):
-    # Safely converts every header to a string, strips whitespace, and removes hidden non-breaking spaces (\xa0) and linebreaks
     cleaned = []
     for col in df.columns:
+        # Convert to string and handle non-breaking spaces (\xa0) and newlines
         col_str = str(col).strip().replace("\n", " ").replace("\xa0", " ")
+        
+        # Remove literal punctuation (like double quotes around "Number of Cards" or "PLAID")
+        col_str = col_str.translate(str.maketrans('', '', string.punctuation))
+        
         # Collapse multiple spaces into a single space
         col_str = " ".join(col_str.split())
         cleaned.append(col_str)
@@ -23,7 +28,6 @@ def clean_columns(df):
 
 def find_column(columns, keywords):
     for col in columns:
-        # Extra safety layer: cast to string and lowercase
         col_str = str(col).lower()
         for key in keywords:
             if key.lower() in col_str:
@@ -69,9 +73,16 @@ if master_file and olt_file:
     master_df = master_xls.parse(master_sheet)
     olt_df = olt_xls.parse(olt_sheet)
 
-    # Clean headers (Crucial: Overwrites the old uncleaned headers)
+    # Clean headers 
     master_df = clean_columns(master_df)
     olt_df = clean_columns(olt_df)
+
+    # -----------------------------
+    # 🔍 DEBUG WINDOW
+    # -----------------------------
+    with st.expander("👀 Click to inspect extracted columns (Debug)"):
+        st.write("**Master Tracker Cleaned Columns:**", list(master_df.columns))
+        st.write("**Olt Tracker Cleaned Columns:**", list(olt_df.columns))
 
     # -----------------------------
     # ✅ Auto Column Detection
@@ -83,6 +94,7 @@ if master_file and olt_file:
 
     if not master_plaid or not olt_plaid:
         st.error(f"❌ Cannot detect PLAID column automatically. Found Master Plaid: '{master_plaid}', OLT Plaid: '{olt_plaid}'")
+        st.info("💡 Please look at the Debug Expander above. If you see names like 'Unnamed: 0', your Excel sheet has blank rows at the very top. You can fix this by adjusting the header row index.")
         st.stop()
 
     st.success("✅ Main linking columns detected successfully")
@@ -124,11 +136,9 @@ if master_file and olt_file:
 
     mapped = pd.DataFrame(index=master_df.index)
 
-    # Clean mappings targeting exact clean match keys found in your provided headers
     mapped["Site Name"] = master_df[master_site] if master_site else ""
     mapped["PLAID"] = master_df[master_plaid]
     
-    # Safe lookups for secondary attributes matching your header schema
     mapped["Region"] = master_df["Region"] if "Region" in master_df.columns else ""
     mapped["Build Year"] = master_df["Build Year"] if "Build Year" in master_df.columns else (master_df["YEAR"] if "YEAR" in master_df.columns else "")
     mapped["No. of Cards"] = master_df["Number of Cards"] if "Number of Cards" in master_df.columns else ""
