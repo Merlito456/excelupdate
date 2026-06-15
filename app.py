@@ -87,7 +87,7 @@ if master_file and olt_file:
     st.sidebar.header("🛠️ Configuration Controls")
     
     auto_master_sheet = detect_sheet(master_xls, ["master", "luzon", "file"])
-    auto_olt_sheet = detect_sheet(olt_xls, ["rollout", "nokia", "olt", "summary", "inventory"])
+    auto_olt_sheet = detect_sheet(xls=olt_xls, keywords=["rollout", "nokia", "olt", "summary", "inventory"])
     
     selected_master_sheet = st.sidebar.selectbox("Master Sheet Name", master_xls.sheet_names, index=master_xls.sheet_names.index(auto_master_sheet))
     selected_olt_sheet = st.sidebar.selectbox("OLT Sheet Name", olt_xls.sheet_names, index=olt_xls.sheet_names.index(auto_olt_sheet))
@@ -98,42 +98,55 @@ if master_file and olt_file:
     master_header_idx = st.sidebar.number_input("Master Header Row Index (1-based)", min_value=1, value=auto_master_idx + 1) - 1
     olt_header_idx = st.sidebar.number_input("OLT Header Row Index (1-based)", min_value=1, value=auto_olt_idx + 1) - 1
 
-    # Parse dataframes
+    # Parse initial DataFrames
     master_df = master_xls.parse(selected_master_sheet, header=master_header_idx)
     olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
 
-    # Save original headers for indexing matching profiles
+    # Cache original layout headers
     orig_master_cols = list(master_df.columns)
     orig_olt_cols = list(olt_df.columns)
 
-    # Clean schemas for normalization evaluation
+    # Standard clean background frames
     master_df_cleaned = clean_columns(master_df.copy())
     olt_df_cleaned = clean_columns(olt_df.copy())
 
+    # Smart fallback guesses
     clean_m_plaid = find_column(master_df_cleaned.columns, ["plaid"])
     clean_o_plaid = find_column(olt_df_cleaned.columns, ["plaid"])
+    clean_m_year = find_column(master_df_cleaned.columns, ["year"])
+    clean_m_type = find_column(master_df_cleaned.columns, ["scope", "type", "nature"])
 
     def get_index_fallback(clean_target, original_list, clean_list):
         if clean_target in clean_list:
             return clean_list.index(clean_target)
         return 0
 
-    st.sidebar.subheader("🎯 Primary Identifier Validation")
+    # 🎯 CONTROL PANEL: Manual Mapping Dropdowns Overrides
+    st.sidebar.subheader("🎯 Direct Column Mapping Controls")
+    
     m_plaid_idx = get_index_fallback(clean_m_plaid, orig_master_cols, list(master_df_cleaned.columns))
-    chosen_master_plaid_raw = st.sidebar.selectbox("Master PLAID Column Identifier", orig_master_cols, index=m_plaid_idx)
+    chosen_master_plaid_raw = st.sidebar.selectbox("🔑 Master PLAID Column (Unique Key)", orig_master_cols, index=m_plaid_idx)
     
     o_plaid_idx = get_index_fallback(clean_o_plaid, orig_olt_cols, list(olt_df_cleaned.columns))
-    chosen_olt_plaid_raw = st.sidebar.selectbox("OLT PLAID Column Identifier", orig_olt_cols, index=o_plaid_idx)
+    chosen_olt_plaid_raw = st.sidebar.selectbox("🔑 OLT PLAID Column", orig_olt_cols, index=o_plaid_idx)
+    
+    m_year_idx = get_index_fallback(clean_m_year, orig_master_cols, list(master_df_cleaned.columns))
+    if m_year_idx == 0 and len(orig_master_cols) >= 5: m_year_idx = 4 # Default to Column E if year isn't matched
+    chosen_master_year_raw = st.sidebar.selectbox("📅 Master Year Source column (e.g. 2021)", orig_master_cols, index=m_year_idx)
 
+    m_type_idx = get_index_fallback(clean_m_type, orig_master_cols, list(master_df_cleaned.columns))
+    chosen_master_type_raw = st.sidebar.selectbox("🛠️ Master Project Type/Scope Source Column", orig_master_cols, index=m_type_idx)
+
+    # Convert user selection down to background programmatic strings
     master_plaid_col_clean = list(master_df_cleaned.columns)[orig_master_cols.index(chosen_master_plaid_raw)]
     olt_plaid_col_clean = list(olt_df_cleaned.columns)[orig_olt_cols.index(chosen_olt_plaid_raw)]
+    master_year_col_clean = list(master_df_cleaned.columns)[orig_master_cols.index(chosen_master_year_raw)]
+    master_type_col_clean = list(master_df_cleaned.columns)[orig_master_cols.index(chosen_master_type_raw)]
 
     # -----------------------------
     # 📉 Missing Records Analysis
     # -----------------------------
-
-    st.write(f"📂 **Active Master Sheet:** `{selected_master_sheet}` (Header Row: {master_header_idx + 1})")
-    st.write(f"📂 **Active OLT Sheet:** `{selected_olt_sheet}` (Header Row: {olt_header_idx + 1})")
+    st.write(f"📂 **Active Master Sheet:** `{selected_master_sheet}` | **Active OLT Sheet:** `{selected_olt_sheet}`")
 
     master_df.columns = master_df_cleaned.columns
     olt_df.columns = olt_df_cleaned.columns
@@ -147,10 +160,10 @@ if master_file and olt_file:
 
     st.subheader("❌ Unmapped Raw Master Entries")
     st.write(f"Total Missing Rows Isolated: **{len(missing_records)}**")
-    st.dataframe(missing_records.head(50), use_container_width=True)
+    st.dataframe(missing_records.head(20), use_container_width=True)
 
     # -----------------------------
-    # 🔄 Smart Fuzzy Alias Mapping Engine
+    # 🔄 High-Precision Matrix Map Engine
     # -----------------------------
     st.subheader("🔄 Intersecting Column Matrix Map")
     
@@ -158,51 +171,46 @@ if master_file and olt_file:
     mapped_columns_log = []
 
     alias_map = {
-        "project tagging": ["project tagging", "project or program", "project", "program and project tagging", "program project", "tagging", "olt scope", "project type"],
+        "project tagging": ["project tagging", "project or program", "project", "program and project tagging", "program project"],
         "site name": ["site name", "sitename", "station name", "site description"],
-        "build year": ["build year", "year", "target year", "deployment year"],
         "clustering": ["clustering", "territory", "area", "cluster"],
         "province": ["province", "territory", "area", "region"],
         "cards": ["cards", "number of cards", "no of cards", "card count"],
         "equipment type": ["equipment type", "electronics equipment", "equipment model", "chassis type"],
-        "status": ["status", "site status", "rollout status", "state", "scope status"]
+        "status": ["status", "site status", "rollout status", "state"]
     }
 
-    for c_idx, orig_olt_col in enumerate(orig_olt_cols):
+    for orig_olt_col in orig_olt_cols:
         clean_olt_name = clean_string_normalization(orig_olt_col)
         matched_master_col = None
 
-        # 🚨 HARD POSITION ROADMAP: Rule for Column B (Index 1) of Nokia Tracker (Build Year)
-        if c_idx == 1: 
-            if len(orig_master_cols) >= 5:
-                matched_master_col = master_df.columns[4]
-                raw_values = missing_records[matched_master_col].tolist()
-                
-                formatted_years = []
-                for val in raw_values:
-                    if pd.isna(val) or str(val).strip() == "" or str(val).lower() == "nan":
-                        formatted_years.append("")
-                    else:
-                        clean_yr = str(val).split('.')[0].strip()
-                        formatted_years.append(f"{clean_yr} build")
-                
-                append_df[orig_olt_col] = formatted_years
-                mapped_columns_log.append(f"🎯 **Hard Position Fixed**: Nokia Column B ('{orig_olt_col}') mapped directly from Master Column E ('{matched_master_col}') + ' build'")
-                continue
-
-        # Force key structural linkage rules
+        # 🚨 OVERRIDE 1: Unique Keys
         if "plaid" in clean_olt_name:
             matched_master_col = master_plaid_col_clean
+        
+        # 🚨 OVERRIDE 2: Build Year Output (appends " build" text)
+        elif "build year" in clean_olt_name:
+            matched_master_col = master_year_col_clean
+            raw_values = missing_records[matched_master_col].tolist()
+            formatted_years = [f"{str(val).split('.')[0].strip()} build" if pd.notna(val) and str(val).strip() != "" and str(val).lower() != "nan" else "" for val in raw_values]
+            append_df[orig_olt_col] = formatted_years
+            mapped_columns_log.append(f"📅 **Manual Rule Override**: Nokia '{orig_olt_col}' ← Master '{matched_master_col}' + ' build'")
+            continue
 
-        # General loop matching sequence for columns
+        # 🚨 OVERRIDE 3: Project Type Output (Pulls 100% raw unedited data)
+        elif "project type" in clean_olt_name:
+            matched_master_col = master_type_col_clean
+            append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
+            mapped_columns_log.append(f"📋 **Direct Raw Copy**: Nokia '{orig_olt_col}' ← Master Selector Custom Source '{matched_master_col}'")
+            continue
+
+        # Fallback automated mapping checks
         if not matched_master_col:
-            # 1. Exact Name Check
             for clean_m_col in master_df.columns:
                 if clean_string_normalization(clean_m_col) == clean_olt_name and clean_olt_name != "":
                     matched_master_col = clean_m_col
                     break
             
-            # 2. Fuzzy Alias Check (Includes OLT Scope/Project Type mapping rules)
             if not matched_master_col and clean_olt_name != "":
                 for base_key, variations in alias_map.items():
                     if any(v in clean_olt_name for v in variations):
@@ -214,7 +222,7 @@ if master_file and olt_file:
                     if matched_master_col:
                         break
 
-        # Populate output data grid matrix
+        # Map findings into structural columns
         if matched_master_col:
             append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
             mapped_columns_log.append(f"🔗 Linked OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'*")
@@ -238,7 +246,6 @@ if master_file and olt_file:
                 ws = wb[selected_olt_sheet]
                 
                 start_row = ws.max_row + 1
-                
                 for r_idx, row_data in enumerate(append_df.values, start=start_row):
                     for c_idx, value in enumerate(row_data, start=1):
                         if pd.isna(value) or str(value).lower() == "nan":
@@ -251,7 +258,6 @@ if master_file and olt_file:
                 out_buffer.seek(0)
                 
                 st.success(f"🎉 Successfully mapped, formatted, and appended {len(append_df)} records directly into the Nokia OLT Tracker sheet!")
-                
                 st.download_button(
                     label="⬇️ Download Updated Nokia OLT Tracker File",
                     data=out_buffer.getvalue(),
@@ -260,5 +266,3 @@ if master_file and olt_file:
                 )
             except Exception as err:
                 st.error(f"Failed to append entries inside workbook structure: {err}")
-    else:
-        st.info("ℹ️ All tracking datasets are completely synchronized. No missing fields to append.")
