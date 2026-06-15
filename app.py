@@ -1,122 +1,152 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+from io import BytesIO
 
-st.title("📊 Master Tracker → Nokia OLT Tracker Tool")
+st.set_page_config(page_title="OLT Tracker Sync Tool", layout="wide")
 
-# =========================
+st.title("📊 OLT Tracker Sync Tool")
+st.write("Compare Master Tracker vs Nokia OLT Tracker, detect missing entries, and generate rollout-ready file.")
+
+# -----------------------------
 # FILE UPLOAD
-# =========================
-master_file = st.file_uploader("Upload Master Tracker (Luzon)", type=["xlsx"])
-olt_file = st.file_uploader("Upload Nokia OLT Tracker", type=["xlsx"])
+# -----------------------------
+master_file = st.file_uploader("Upload MASTER Tracker File", type=["xlsx"])
+olt_file = st.file_uploader("Upload Nokia OLT Tracker File", type=["xlsx"])
 
+# -----------------------------
+# FUNCTIONS
+# -----------------------------
+def load_excel_with_auto_sheet(file):
+    xls = pd.ExcelFile(file)
+    return xls.sheet_names, xls
+
+def get_sheet(xls, selected_sheet):
+    return pd.read_excel(xls, sheet_name=selected_sheet)
+
+def normalize_columns(df):
+    df.columns = df.columns.str.strip().str.replace("\n", " ").str.replace("  ", " ")
+    return df
+
+def detect_column(df, keywords):
+    for col in df.columns:
+        for key in keywords:
+            if key.lower() in col.lower():
+                return col
+    return None
+
+# -----------------------------
+# MAIN PROCESS
+# -----------------------------
 if master_file and olt_file:
 
-    # =========================
-    # LOAD FILES
-    # =========================
-    master_df = pd.read_excel(master_file, sheet_name="MASTERS LIST")
-    olt_df = pd.read_excel(olt_file, sheet_name="rollout")
+    # Load available sheets
+    master_sheets, master_xls = load_excel_with_auto_sheet(master_file)
+    olt_sheets, olt_xls = load_excel_with_auto_sheet(olt_file)
 
-    st.success("✅ Files loaded successfully")
+    st.subheader("📑 Select Sheets")
+    master_sheet = st.selectbox("Master Sheet", master_sheets)
+    olt_sheet = st.selectbox("OLT Sheet", olt_sheets)
 
-    # =========================
-    # COLUMN NORMALIZATION
-    # =========================
-    master_df.columns = master_df.columns.str.strip()
-    olt_df.columns = olt_df.columns.str.strip()
+    master_df = get_sheet(master_xls, master_sheet)
+    olt_df = get_sheet(olt_xls, olt_sheet)
 
-    # =========================
-    # REQUIRED COLUMNS
-    # =========================
-    master_key_cols = {
-        "Site Name": "Site Name",
-        "PLAID": "PLAID",
-        "Region": "Region",
-        "YEAR": "Build Year",
-        "Electronics Equipment": "Equipment Type",
-        "Number of Cards": "No. of Cards",
-        "Scope Status": "Site Status",
-        "Survey Date": "Site Survey Actual Date",
-        "TSSR Approved Date": "TSSR Approval Actual Date",
-        "Installed date": "Installation done Actual Date",
-        "POWERTAPPED DATE": "Powertapping done Actual Date",
-        "Integrated Date": "Integration done Actual Date",
-        "PAT'ed": "PAT Done Actual Date",
-        "PAC'ed": "PAC submission Actual Date",
-        "FAC'ed": "FAC Submission Actual Date"
-    }
+    master_df = normalize_columns(master_df)
+    olt_df = normalize_columns(olt_df)
 
-    # =========================
-    # SAFE COLUMN GETTER
-    # =========================
-    def get_col(df, col_name):
-        if col_name in df.columns:
-            return df[col_name]
-        return np.nan
+    st.success("✅ Files Loaded Successfully")
 
-    # =========================
-    # BUILD STRUCTURED DATA
-    # =========================
-    structured_rows = pd.DataFrame()
+    # -----------------------------
+    # AUTO DETECT KEY COLUMNS
+    # -----------------------------
+    master_plaid = detect_column(master_df, ["PLAID"])
+    master_site = detect_column(master_df, ["Site Name"])
 
-    for m_col, o_col in master_key_cols.items():
-        structured_rows[o_col] = get_col(master_df, m_col)
+    olt_plaid = detect_column(olt_df, ["PLAID"])
+    olt_site = detect_column(olt_df, ["Site Name"])
 
-    # Add missing required Nokia columns with defaults
-    structured_rows["Project Tagging"] = "Auto-Generated"
-    structured_rows["Clustering"] = ""
-    structured_rows["Project Type"] = "OLT New Build"
-    structured_rows["ORIGINAL NO. OF LINES"] = ""
-    structured_rows["NO. OF LINES TO BUILD"] = ""
-    structured_rows["Cabinet Location"] = ""
-    structured_rows["No. of Chassis"] = ""
-    structured_rows["Equipment Type (Expansion)"] = ""
-    structured_rows["No. of Cards (Expansion)"] = ""
-    structured_rows["Cab No."] = ""
-    structured_rows["Site Status"] = get_col(master_df, "Scope Status")
-    structured_rows["GO/STOP"] = ""
-    structured_rows["Milestone"] = ""
+    st.write("### 🔍 Detected Columns")
+    st.write(f"Master PLAID: {master_plaid}")
+    st.write(f"Master Site: {master_site}")
+    st.write(f"OLT PLAID: {olt_plaid}")
+    st.write(f"OLT Site: {olt_site}")
 
-    st.write("### ✅ Structured Data Preview")
-    st.dataframe(structured_rows)
+    if not all([master_plaid, olt_plaid]):
+        st.error("❌ Could not detect PLAID columns automatically.")
+        st.stop()
 
-    # =========================
+    # -----------------------------
     # FIND MISSING ENTRIES
-    # =========================
-    master_plaid = set(master_df["PLAID"].dropna().astype(str))
-    olt_plaid = set(olt_df["PLAID"].dropna().astype(str))
+    # -----------------------------
+    missing = master_df[~master_df[master_plaid].isin(olt_df[olt_plaid])]
 
-    missing_plaid = master_plaid - olt_plaid
+    st.subheader("🚨 Missing Entries")
+    st.write(f"Total Missing: {len(missing)}")
+    st.dataframe(missing[[master_site, master_plaid]])
 
-    missing_df = master_df[master_df["PLAID"].astype(str).isin(missing_plaid)]
+    # -----------------------------
+    # MAPPING ENGINE (STRUCTURE TRANSLATION)
+    # -----------------------------
+    st.subheader("🔄 Mapping to OLT Structure")
 
-    st.write("### ❌ Missing Entries (Not in OLT Tracker)")
-    st.dataframe(missing_df[["Site Name", "PLAID", "Region"]])
+    def map_to_olt(master_df):
 
-    # =========================
-    # SAVE TO EXCEL WITH HIGHLIGHT
-    # =========================
-    output_file = "output_with_missing.xlsx"
+        mapped = pd.DataFrame()
 
-    with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
-        structured_rows.to_excel(writer, sheet_name="Structured_Data", index=False)
-        missing_df.to_excel(writer, sheet_name="Missing_Entries", index=False)
+        # Core mapping based on your headers
+        mapped["Project Tagging"] = master_df.get("PROJECT or PROGRAM")
+        mapped["Build Year"] = master_df.get("Build Year", master_df.get("YEAR"))
+        mapped["Region"] = master_df.get("Region")
+        mapped["Project Type"] = master_df.get("OLT Scope")
 
-        workbook = writer.book
-        worksheet = writer.sheets["Missing_Entries"]
+        mapped["Site Name"] = master_df.get("Site Name")
+        mapped["PLAID"] = master_df.get("PLAID")
 
-        highlight_format = workbook.add_format({'bg_color': '#FF9999'})
+        mapped["Equipment Type"] = master_df.get("Electronics Equipment")
+        mapped["No. of Cards"] = master_df.get("Number of Cards")
 
-        for row_num in range(len(missing_df)):
-            worksheet.set_row(row_num + 1, cell_format=highlight_format)
+        mapped["Site Status"] = master_df.get("Status")
 
-    # =========================
-    # DOWNLOAD BUTTON
-    # =========================
-    with open(output_file, "rb") as f:
-        st.download_button(
-            label="📥 Download Result File (with highlight)",
-            data=f,
-            file_name=output_file
-        )
+        mapped["Site Survey Actual Date"] = master_df.get("Survey Date")
+        mapped["TSSR Approval Actual Date"] = master_df.get("TSSR Approved Date")
+
+        mapped["Installation done Actual Date"] = master_df.get("Installed date")
+        mapped["Powertapping done Actual Date"] = master_df.get("POWERTAPPED DATE")
+        mapped["Integration done Actual Date"] = master_df.get("Integrated Date")
+
+        mapped["PAT Done Actual Date"] = master_df.get("PAT")
+        mapped["PAC submission Actual Date"] = master_df.get("PAC")
+        mapped["FAC Submission Actual Date"] = master_df.get("FAC")
+
+        return mapped
+
+    mapped_missing = map_to_olt(missing)
+
+    st.write("Preview of mapped entries:")
+    st.dataframe(mapped_missing)
+
+    # -----------------------------
+    # HIGHLIGHTING OUTPUT
+    # -----------------------------
+    def highlight_missing(df):
+        return df.style.apply(lambda x: ["background-color: yellow"] * len(x), axis=1)
+
+    st.subheader("🟡 Highlighted Missing Entries")
+    st.dataframe(highlight_missing(mapped_missing))
+
+    # -----------------------------
+    # DOWNLOAD OUTPUT FILE
+    # -----------------------------
+    def convert_to_excel(df):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Missing Entries')
+        return output.getvalue()
+
+    excel_file = convert_to_excel(mapped_missing)
+
+    st.download_button(
+        label="📥 Download Missing Entries",
+        data=excel_file,
+        file_name="missing_olt_entries.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
