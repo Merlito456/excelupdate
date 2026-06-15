@@ -102,15 +102,18 @@ if master_file and olt_file:
     master_df = master_xls.parse(selected_master_sheet, header=master_header_idx)
     olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
 
-    # Cache original layout headers
+    # 🚨 NOISE FILTRATION: Dropping phantom columns from the target OLT file layout
+    olt_df = olt_df.loc[:, ~olt_df.columns.astype(str).str.startswith('Unnamed:')]
+    olt_df = olt_df.loc[:, olt_df.columns.notna() & (olt_df.columns != "")]
+    
+    # Cache verified layout headers
     orig_master_cols = list(master_df.columns)
     orig_olt_cols = list(olt_df.columns)
 
-    # Standard clean background frames
+    # Clean schemas for evaluation processing loops
     master_df_cleaned = clean_columns(master_df.copy())
     olt_df_cleaned = clean_columns(olt_df.copy())
 
-    # Smart fallback guesses for specific layout identifiers
     clean_m_plaid = find_column(master_df_cleaned.columns, ["plaid"])
     clean_o_plaid = find_column(olt_df_cleaned.columns, ["plaid"])
 
@@ -149,7 +152,7 @@ if master_file and olt_file:
     st.dataframe(missing_records.head(20), use_container_width=True)
 
     # -----------------------------
-    # 🔄 High-Precision Positional Matrix Engine
+    # 🔄 High-Precision Matrix Map Engine
     # -----------------------------
     st.subheader("🔄 Intersecting Column Matrix Map")
     
@@ -170,6 +173,10 @@ if master_file and olt_file:
         clean_olt_name = clean_string_normalization(orig_olt_col)
         matched_master_col = None
 
+        # Skip matching mechanics entirely if name represents ghost headers
+        if clean_olt_name == "" or "solution track" in clean_olt_name or clean_olt_name == "track":
+            continue
+
         # 🚨 POSITION OVERRIDE 1: Nokia Column B (Index 1) ← Master Column E (Index 4) [Build Year]
         if c_idx == 1: 
             if len(orig_master_cols) >= 5:
@@ -183,16 +190,16 @@ if master_file and olt_file:
         # 🚨 POSITION OVERRIDE 2: Nokia Project Type (Column F / Index 5) ← Master Column M (Index 12) [OLT Scope]
         if "project type" in clean_olt_name or c_idx == 5:
             if len(orig_master_cols) >= 13:
-                matched_master_col = master_df.columns[12] # Column M is index 12
+                matched_master_col = master_df.columns[12]
                 append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
                 mapped_columns_log.append(f"📋 **Position Linked (Direct Copy)**: Nokia Column F ('{orig_olt_col}') ← Master Column M ('{matched_master_col}') [OLT Scope]")
                 continue
 
-        # Force structural tracking linkage for the primary identifier key
+        # Force structural tracking linkage for key identifier
         if "plaid" in clean_olt_name:
             matched_master_col = master_plaid_col_clean
 
-        # Fallback automated name checks for remaining unlinked columns
+        # Fallback automated verification scanner
         if not matched_master_col:
             for clean_m_col in master_df.columns:
                 if clean_string_normalization(clean_m_col) == clean_olt_name and clean_olt_name != "":
@@ -216,6 +223,9 @@ if master_file and olt_file:
             mapped_columns_log.append(f"🔗 Linked OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'*")
         else:
             append_df[orig_olt_col] = [""] * len(missing_records)
+
+    # Explicit final layout cleanup rule
+    append_df = append_df.loc[:, ~append_df.columns.astype(str).str.contains('track', case=False)]
 
     with st.expander("👀 View automated column connection mapping mapping audit trail"):
         for log in mapped_columns_log:
