@@ -174,7 +174,7 @@ if master_file and olt_file:
         if clean_olt_name == "" or "solution track" in clean_olt_name or clean_olt_name == "track":
             continue
 
-        # 🚨 OVERRIDE: Nokia Clustering (Column D / Index 3) - Set to Blank
+        # 🚨 OVERRIDE: Nokia Clustering (Column D / Index 3) - FORCE BLANK
         if "clustering" in clean_olt_name or c_idx == 3:
             append_df[orig_olt_col] = [""] * len(missing_records)
             mapped_columns_log.append(f"🌍 **Position Linked**: Nokia Column D ('{orig_olt_col}') ← [INTENTIONALLY BLANK]")
