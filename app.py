@@ -112,6 +112,7 @@ if master_file and olt_file:
 
     clean_m_plaid = find_column(master_df_cleaned.columns, ["plaid"])
     clean_o_plaid = find_column(olt_df_cleaned.columns, ["plaid"])
+    clean_m_year = find_column(master_df_cleaned.columns, ["year", "build year"])
 
     def get_index_fallback(clean_target, original_list, clean_list):
         if clean_target in clean_list:
@@ -125,8 +126,13 @@ if master_file and olt_file:
     o_plaid_idx = get_index_fallback(clean_o_plaid, orig_olt_cols, list(olt_df_cleaned.columns))
     chosen_olt_plaid_raw = st.sidebar.selectbox("OLT PLAID Column Identifier", orig_olt_cols, index=o_plaid_idx)
 
+    # New Dropdown override specifically for finding the "Year" column (Column E)
+    m_year_idx = get_index_fallback(clean_m_year, orig_master_cols, list(master_df_cleaned.columns))
+    chosen_master_year_raw = st.sidebar.selectbox("Master Year Column Override (Col E)", orig_master_cols, index=m_year_idx)
+
     master_plaid_col_clean = list(master_df_cleaned.columns)[orig_master_cols.index(chosen_master_plaid_raw)]
     olt_plaid_col_clean = list(olt_df_cleaned.columns)[orig_olt_cols.index(chosen_olt_plaid_raw)]
+    master_year_col_clean = list(master_df_cleaned.columns)[orig_master_cols.index(chosen_master_year_raw)]
 
     # -----------------------------
     # 📉 Missing Records Analysis
@@ -172,44 +178,47 @@ if master_file and olt_file:
         clean_olt_name = clean_string_normalization(orig_olt_col)
         matched_master_col = None
 
-        # 1. Exact Match Test
-        for clean_m_col in master_df.columns:
-            if clean_string_normalization(clean_m_col) == clean_olt_name and clean_olt_name != "":
-                matched_master_col = clean_m_col
-                break
-        
-        # 2. Advanced Fuzzy Fallback Search
-        if not matched_master_col and clean_olt_name != "":
-            for base_key, variations in alias_map.items():
-                if any(v in clean_olt_name for v in variations):
-                    for clean_m_col in master_df.columns:
-                        clean_m_norm = clean_string_normalization(clean_m_col)
-                        if any(v == clean_m_norm for v in variations):
-                            matched_master_col = clean_m_col
-                            break
-                if matched_master_col:
-                    break
-
-        # Explicit Safety Link for key primary data strings
+        # Force structural override linkage for specific telecom keys
         if "plaid" in clean_olt_name:
             matched_master_col = master_plaid_col_clean
+        elif "build year" in clean_olt_name:
+            matched_master_col = master_year_col_clean
 
-        # Assign values to the frame matrix
+        # If it's not explicitly overridden, use standard alias cross-examination mapping
+        if not matched_master_col:
+            # 1. Exact Match Test
+            for clean_m_col in master_df.columns:
+                if clean_string_normalization(clean_m_col) == clean_olt_name and clean_olt_name != "":
+                    matched_master_col = clean_m_col
+                    break
+            
+            # 2. Advanced Fuzzy Fallback Search
+            if not matched_master_col and clean_olt_name != "":
+                for base_key, variations in alias_map.items():
+                    if any(v in clean_olt_name for v in variations):
+                        for clean_m_col in master_df.columns:
+                            clean_m_norm = clean_string_normalization(clean_m_col)
+                            if any(v == clean_m_norm for v in variations):
+                                matched_master_col = clean_m_col
+                                break
+                    if matched_master_col:
+                        break
+
+        # Assign values to the frame matrix with text suffix processing rules applied
         if matched_master_col:
             raw_values = missing_records[matched_master_col].tolist()
             
-            # ✨ TRANSFORM RULE: Apply "XXXX build" logic to the Build Year column mapping
-            if "build year" in clean_olt_name:
+            # ✨ TRANSFORM RULE: Force apply "XXXX build" logic onto Build Year output column destination
+            if "build year" in clean_olt_name or matched_master_col == master_year_col_clean:
                 formatted_years = []
                 for val in raw_values:
                     if pd.isna(val) or str(val).strip() == "" or str(val).lower() == "nan":
                         formatted_years.append("")
                     else:
-                        # Clean up pandas decimal artifacts (e.g., converting 2021.0 float to string '2021')
                         clean_yr = str(val).split('.')[0].strip()
                         formatted_years.append(f"{clean_yr} build")
                 append_df[orig_olt_col] = formatted_years
-                mapped_columns_log.append(f"⚙️ Transformed OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'* + adding ' build' suffix")
+                mapped_columns_log.append(f"⚙️ Transformed OLT **'{orig_olt_col}'** ← Master Year Column Override *'{matched_master_col}'* + adding ' build' suffix")
             else:
                 append_df[orig_olt_col] = raw_values
                 mapped_columns_log.append(f"🔗 Linked OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'*")
