@@ -174,7 +174,7 @@ if master_file and olt_file:
         if clean_olt_name == "" or "solution track" in clean_olt_name or clean_olt_name == "track":
             continue
 
-        # 🚨 POSITION OVERRIDE 1: Nokia Column B (Index 1) ← Master Column E (Index 4) [Build Year]
+        # 🚨 OVERRIDE 1: Nokia Column B (Index 1) ← Master Column E (Index 4) [Build Year]
         if c_idx == 1: 
             if len(orig_master_cols) >= 5:
                 matched_master_col = master_df.columns[4]
@@ -184,31 +184,31 @@ if master_file and olt_file:
                 mapped_columns_log.append(f"📅 **Position Linked**: Nokia Column B ('{orig_olt_col}') ← Master Column E ('{matched_master_col}') + ' build'")
                 continue
 
-        # 🚨 POSITION OVERRIDE 2: Nokia Project Type (Column F / Index 5) ← Master Column M (Index 12) [OLT Scope]
+        # 🚨 OVERRIDE 2: Nokia Project Type (Column F / Index 5) ← Master Column M (Index 12) [OLT Scope]
         if "project type" in clean_olt_name or c_idx == 5:
             if len(orig_master_cols) >= 13:
                 matched_master_col = master_df.columns[12]
                 append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
-                mapped_columns_log.append(f"📋 **Position Linked (Direct Copy)**: Nokia Column F ('{orig_olt_col}') ← Master Column M ('{matched_master_col}') [OLT Scope]")
+                mapped_columns_log.append(f"📋 **Position Linked**: Nokia Column F ('{orig_olt_col}') ← Master Column M ('{matched_master_col}') [OLT Scope]")
                 continue
 
-        # 🚨 POSITION OVERRIDE 3: Nokia Equipment Type (Column N / Index 13) ← Master Column N (Index 13) [Electronics Equipment]
+        # 🚨 OVERRIDE 3: Nokia Equipment Type (Column N / Index 13) ← Master Column N (Index 13) [Electronics Equipment]
         if "equipment type" in clean_olt_name or c_idx == 13:
             if len(orig_master_cols) >= 14:
                 matched_master_col = master_df.columns[13]
                 append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
-                mapped_columns_log.append(f"⚙️ **Position Linked (Direct Copy)**: Nokia Column N ('{orig_olt_col}') ← Master Column N ('{matched_master_col}') [Electronics Equipment]")
+                mapped_columns_log.append(f"⚙️ **Position Linked**: Nokia Column N ('{orig_olt_col}') ← Master Column N ('{matched_master_col}') [Electronics Equipment]")
                 continue
 
-        # 🚨 POSITION OVERRIDE 4: Nokia Site Status (Column V / Index 21) ← Master Column L (Index 11) [Scope Status]
+        # 🚨 OVERRIDE 4: Nokia Site Status (Column V / Index 21) ← Master Column L (Index 11) [Scope Status]
         if "site status" in clean_olt_name or c_idx == 21:
             if len(orig_master_cols) >= 12:
                 matched_master_col = master_df.columns[11]
                 append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
-                mapped_columns_log.append(f"📡 **Position Linked (Direct Copy)**: Nokia Column V ('{orig_olt_col}') ← Master Column L ('{matched_master_col}') [Scope status]")
+                mapped_columns_log.append(f"📡 **Position Linked**: Nokia Column V ('{orig_olt_col}') ← Master Column L ('{matched_master_col}') [Scope status]")
                 continue
 
-        # 🚨 POSITION OVERRIDE 5: Nokia Site Survey Actual Date (Column AO / Index 40) ← Master Column X (Index 23) [Survey Date]
+        # 🚨 OVERRIDE 5: Nokia Site Survey Actual Date (Column AO / Index 40) ← Master Column X (Index 23) [Survey Date]
         if "site survey actual date" in clean_olt_name or c_idx == 40:
             if len(orig_master_cols) >= 24:
                 matched_master_col = master_df.columns[23]
@@ -218,7 +218,7 @@ if master_file and olt_file:
                 mapped_columns_log.append(f"📆 **Position Linked**: Nokia Column AO ('{orig_olt_col}') ← Master Column X ('{matched_master_col}') [Survey Date]")
                 continue
 
-        # 🚨 POSITION OVERRIDE 6: Nokia Installation done Actual Date (Column BD / Index 55) ← Master Column AA (Index 26) [Installed date]
+        # 🚨 OVERRIDE 6: Nokia Installation done Actual Date (Column BD / Index 55) ← Master Column AA (Index 26) [Installed date]
         if "installation done actual date" in clean_olt_name or c_idx == 55:
             if len(orig_master_cols) >= 27:
                 matched_master_col = master_df.columns[26]
@@ -228,14 +228,24 @@ if master_file and olt_file:
                 mapped_columns_log.append(f"🏗️ **Position Linked**: Nokia Column BD ('{orig_olt_col}') ← Master Column AA ('{matched_master_col}') [Installed date]")
                 continue
 
-        # 🚨 POSITION OVERRIDE 7: Nokia Powertapping done Actual Date (Column BK / Index 62) ← Master Column AC (Index 28) [Powertapped date]
+        # 🚨 OVERRIDE 7: Nokia Powertapping done Actual Date (Column BK / Index 62) ← Master Column AC (Index 28) [Powertapped date]
         if "powertapping done actual date" in clean_olt_name or c_idx == 62:
             if len(orig_master_cols) >= 29:
-                matched_master_col = master_df.columns[28] # Column AC is index 28
+                matched_master_col = master_df.columns[28]
                 raw_dates = missing_records[matched_master_col].tolist()
                 cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
                 append_df[orig_olt_col] = cleaned_dates
-                mapped_columns_log.append(f"⚡ **Position Linked (Date Sanitized)**: Nokia Column BK ('{orig_olt_col}') ← Master Column AC ('{matched_master_col}') [Powertapped date]")
+                mapped_columns_log.append(f"⚡ **Position Linked**: Nokia Column BK ('{orig_olt_col}') ← Master Column AC ('{matched_master_col}') [Powertapped date]")
+                continue
+
+        # 🚨 OVERRIDE 8: Nokia Integration done Actual Date (Column BS / Index 70) ← Master Column AD (Index 29) [Integrated date]
+        if "integration done actual date" in clean_olt_name or c_idx == 70:
+            if len(orig_master_cols) >= 30:
+                matched_master_col = master_df.columns[29] # Column AD is index 29
+                raw_dates = missing_records[matched_master_col].tolist()
+                cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
+                append_df[orig_olt_col] = cleaned_dates
+                mapped_columns_log.append(f"🌐 **Position Linked (Date Sanitized)**: Nokia Column BS ('{orig_olt_col}') ← Master Column AD ('{matched_master_col}') [Integrated date]")
                 continue
 
         # Force key tracking structural link
