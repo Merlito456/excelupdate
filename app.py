@@ -1,45 +1,46 @@
 import streamlit as st
 import pandas as pd
 
-st.title("📊 OLT Tracker Auto-Updater")
+st.set_page_config(page_title="OLT Tracker Sync Tool", layout="wide")
 
-# ----------------------------
-# Upload files
-# ----------------------------
-master_file = st.file_uploader("Upload Master Tracker File", type=["xlsx"])
-olt_file = st.file_uploader("Upload Nokia OLT Tracker", type=["xlsx"])
+st.title("📊 OLT Tracker Auto Sync + Missing Checker")
 
-# ----------------------------
-# CLEAN COLUMN NAMES FUNCTION
-# ----------------------------
-def clean_columns(df):
-    df.columns = (
-        df.columns
-        .astype(str)
-        .str.replace("\n", " ", regex=True)
-        .str.replace("  ", " ")
-        .str.strip()
-    )
-    return df
-
-# ----------------------------
-# AUTO LOAD SHEET
-# ----------------------------
-def load_sheet(file, keyword):
-    xl = pd.ExcelFile(file)
-    for sheet in xl.sheet_names:
-        if keyword.lower() in sheet.lower():
-            return pd.read_excel(file, sheet_name=sheet)
+# -----------------------------
+# Helper: find column by keywords
+# -----------------------------
+def find_column(columns, keywords):
+    for col in columns:
+        for key in keywords:
+            if key.lower() in col.lower():
+                return col
     return None
 
-# ----------------------------
-# MAIN PROCESS
-# ----------------------------
+# -----------------------------
+# Helper: auto sheet loader
+# -----------------------------
+def load_excel_smart(file, possible_names):
+    xls = pd.ExcelFile(file)
+    for name in xls.sheet_names:
+        for expected in possible_names:
+            if expected.lower() in name.lower():
+                return pd.read_excel(file, sheet_name=name)
+    return None
+
+
+# -----------------------------
+# Upload UI
+# -----------------------------
+master_file = st.file_uploader("Upload Master Tracker (Data File)", type=["xlsx"])
+olt_file = st.file_uploader("Upload Nokia OLT Tracker", type=["xlsx"])
+
+
 if master_file and olt_file:
 
-    # Load sheets dynamically
-    master_df = load_sheet(master_file, "master")
-    olt_df = load_sheet(olt_file, "rollout")
+    # -----------------------------
+    # Load sheets (AUTO DETECT)
+    # -----------------------------
+    master_df = load_excel_smart(master_file, ["master list"])
+    olt_df = load_excel_smart(olt_file, ["rollout"])
 
     if master_df is None:
         st.error("❌ MASTER LIST sheet not found")
@@ -49,95 +50,81 @@ if master_file and olt_file:
         st.error("❌ Rollout sheet not found")
         st.stop()
 
-    # Clean columns
-    master_df = clean_columns(master_df)
-    olt_df = clean_columns(olt_df)
+    # -----------------------------
+    # Normalize column names
+    # -----------------------------
+    master_df.columns = master_df.columns.str.strip()
+    olt_df.columns = olt_df.columns.str.strip()
 
-    st.success("✅ Files loaded successfully")
+    # -----------------------------
+    # Detect columns dynamically
+    # -----------------------------
+    master_plaid = find_column(master_df.columns, ["plaid"])
+    master_site = find_column(master_df.columns, ["site name"])
+    master_region = find_column(master_df.columns, ["region"])
+    master_year = find_column(master_df.columns, ["year"])
+    master_cards = find_column(master_df.columns, ["number of cards"])
 
-    # ----------------------------
-    # REQUIRED COLUMN CHECK
-    # ----------------------------
-    required_master_cols = ["PLAID", "Site Name", "Region", "YEAR"]
-    required_olt_cols = ["PLAID", "Site Name"]
+    olt_plaid = find_column(olt_df.columns, ["plaid"])
+    olt_site = find_column(olt_df.columns, ["site name"])
+    olt_region = find_column(olt_df.columns, ["region"])
+    olt_year = find_column(olt_df.columns, ["build year"])
+    olt_cards = find_column(olt_df.columns, ["no. of cards"])
 
-    if not all(col in master_df.columns for col in required_master_cols):
-        st.error("❌ Master file missing required columns")
+    if not master_plaid or not olt_plaid:
+        st.error("❌ PLAID column not detected")
         st.stop()
 
-    if not all(col in olt_df.columns for col in required_olt_cols):
-        st.error("❌ OLT file missing required columns")
-        st.stop()
+    st.success("✅ Columns detected successfully")
 
-    # ----------------------------
-    # FIND MISSING ENTRIES
-    # ----------------------------
-    existing_plaids = olt_df["PLAID"].astype(str).str.strip()
-    master_df["PLAID"] = master_df["PLAID"].astype(str).str.strip()
+    # -----------------------------
+    # Extract lists
+    # -----------------------------
+    master_list = master_df[master_plaid].astype(str).str.strip()
+    olt_list = olt_df[olt_plaid].astype(str).str.strip()
 
-    missing_df = master_df[~master_df["PLAID"].isin(existing_plaids)]
+    # -----------------------------
+    # Find missing
+    # -----------------------------
+    missing_mask = ~master_list.isin(olt_list)
+    missing_df = master_df[missing_mask]
 
-    st.subheader(f"🔍 Missing Entries Found: {len(missing_df)}")
+    st.subheader("🔍 Missing Entries")
+    st.write(f"Total Missing: {missing_df.shape[0]}")
+    st.dataframe(missing_df)
 
-    if len(missing_df) == 0:
-        st.success("✅ No missing entries. Files are aligned.")
-    else:
-        st.dataframe(missing_df[["PLAID", "Site Name", "Region"]])
+    # -----------------------------
+    # ROW BUILDER (STRUCTURE TRANSLATION)
+    # -----------------------------
+    st.subheader("🔄 Converted Rows (Ready for Rollout)")
 
-    # ----------------------------
-    # TRANSFORMATION LOGIC
-    # ----------------------------
-    def transform_row(row):
-        return {
-            "Project Tagging": "AUTO-ADDED",
-            "Build Year": row.get("YEAR", ""),
-            "Region": row.get("Region", ""),
-            "Clustering": "",
-            "Project Type": row.get("PROJECT or PROGRAM", ""),
-            "Site Name": row.get("Site Name", ""),
-            "PLAID": row.get("PLAID", ""),
-            "ORIGINAL NO. OF LINES": "",
-            "NO. OF LINES TO BUILD": "",
-            "Cabinet Location": "",
-            "Equipment Type": row.get("Electronics Equipment", ""),
-            "No. of Chassis": "",
-            "No. of Cards": row.get("Number of Cards", ""),
-            "Site Status": row.get("Status", ""),
-            "Target Month": "",
-            "GO/STOP": "",
-            "Milestone": row.get("Latest Milestone", "")
-        }
+    new_rows = pd.DataFrame({
+        "Project Tagging": "AUTO-ADDED",
+        "Build Year": master_df[master_year] if master_year else "",
+        "Region": master_df[master_region] if master_region else "",
+        "Site Name": master_df[master_site] if master_site else "",
+        "PLAID": master_df[master_plaid],
+        "No. of Cards": master_df[master_cards] if master_cards else "",
+        "Site Status": "FOR VALIDATION"
+    })
 
-    transformed_rows = pd.DataFrame([transform_row(r) for _, r in missing_df.iterrows()])
+    new_rows = new_rows.loc[missing_mask]
 
-    # ----------------------------
-    # APPEND TO OLT
-    # ----------------------------
-    updated_df = pd.concat([olt_df, transformed_rows], ignore_index=True)
+    st.dataframe(new_rows)
 
-    # Mark new rows
-    updated_df["NEW_ENTRY"] = updated_df["PLAID"].isin(missing_df["PLAID"])
+    # -----------------------------
+    # Highlight Excel Output
+    # -----------------------------
+    def highlight_missing(row):
+        return ['background-color: yellow']*len(row)
 
-    # ----------------------------
-    # HIGHLIGHT FUNCTION
-    # ----------------------------
-    def highlight_row(row):
-        if row["NEW_ENTRY"]:
-            return ["background-color: yellow"] * len(row)
-        return [""] * len(row)
+    styled_missing = missing_df.style.apply(highlight_missing, axis=1)
 
-    st.subheader("📌 Updated OLT Tracker Preview")
-    st.dataframe(updated_df.style.apply(highlight_row, axis=1))
+    output_file = "OLT_Missing_Output.xlsx"
 
-    # ----------------------------
-    # DOWNLOAD FILE
-    # ----------------------------
-    output_file = "updated_OLT_tracker.xlsx"
-    updated_df.to_excel(output_file, index=False)
+    with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
+        missing_df.to_excel(writer, sheet_name="Missing", index=False)
+        new_rows.to_excel(writer, sheet_name="Ready_to_Add", index=False)
 
     with open(output_file, "rb") as f:
-        st.download_button(
-            label="📥 Download Updated File",
-            data=f,
-            file_name=output_file
-        )
+        st.download_button("⬇ Download Result File", f, file_name=output_file)
