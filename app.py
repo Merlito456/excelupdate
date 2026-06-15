@@ -159,13 +159,8 @@ if master_file and olt_file:
     append_df = pd.DataFrame(columns=orig_olt_cols)
     mapped_columns_log = []
 
-    alias_map = {
-        "project tagging": ["project tagging", "project or program", "project", "program and project tagging", "program project"],
-        "site name": ["site name", "sitename", "station name", "site description"],
-        "clustering": ["clustering", "territory", "area", "cluster"],
-        "province": ["province", "territory", "area", "region"],
-        "cards": ["cards", "number of cards", "no of cards", "card count"]
-    }
+    # Map target strings to their clean representations 
+    m_normalized_cols = list(master_df.columns)
 
     for c_idx, orig_olt_col in enumerate(orig_olt_cols):
         clean_olt_name = clean_string_normalization(orig_olt_col)
@@ -174,140 +169,173 @@ if master_file and olt_file:
         if clean_olt_name == "" or "solution track" in clean_olt_name or clean_olt_name == "track":
             continue
 
-        # 🚨 OVERRIDE 1: Nokia Column B (Index 1) ← Master Column E (Index 4) [Build Year]
-        if c_idx == 1: 
-            if len(orig_master_cols) >= 5:
-                matched_master_col = master_df.columns[4]
+        # 🚨 METADATA OVERRIDE 1: Project Tagging ← PROJECT or PROGRAM
+        if clean_olt_name == "project tagging":
+            if "project or program" in m_normalized_cols:
+                matched_master_col = "project or program"
+                append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
+                mapped_columns_log.append(f"📋 **Schema Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}')")
+                continue
+
+        # 🚨 METADATA OVERRIDE 2: Build Year ← YEAR
+        if clean_olt_name == "build year":
+            if "year" in m_normalized_cols:
+                matched_master_col = "year"
                 raw_values = missing_records[matched_master_col].tolist()
                 formatted_years = [f"{str(val).split('.')[0].strip()} build" if pd.notna(val) and str(val).strip() != "" and str(val).lower() != "nan" else "" for val in raw_values]
                 append_df[orig_olt_col] = formatted_years
-                mapped_columns_log.append(f"📅 **Position Linked**: Nokia Column B ('{orig_olt_col}') ← Master Column E ('{matched_master_col}') + ' build'")
+                mapped_columns_log.append(f"📅 **Schema Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}') + ' build'")
                 continue
 
-        # 🚨 OVERRIDE 2: Nokia Project Type (Column F / Index 5) ← Master Column M (Index 12) [OLT Scope]
-        if "project type" in clean_olt_name or c_idx == 5:
-            if len(orig_master_cols) >= 13:
-                matched_master_col = master_df.columns[12]
+        # 🚨 METADATA OVERRIDE 3: Region ← Region
+        if clean_olt_name == "region":
+            if "region" in m_normalized_cols:
+                matched_master_col = "region"
                 append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
-                mapped_columns_log.append(f"📋 **Position Linked**: Nokia Column F ('{orig_olt_col}') ← Master Column M ('{matched_master_col}') [OLT Scope]")
+                mapped_columns_log.append(f"📍 **Schema Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}')")
                 continue
 
-        # 🚨 OVERRIDE 3: Nokia Equipment Type (Column N / Index 13) ← Master Column N (Index 13) [Electronics Equipment]
-        if "equipment type" in clean_olt_name or c_idx == 13:
-            if len(orig_master_cols) >= 14:
-                matched_master_col = master_df.columns[13]
+        # 🚨 METADATA OVERRIDE 4: Clustering ← TERRITORY
+        if clean_olt_name == "clustering":
+            if "territory" in m_normalized_cols:
+                matched_master_col = "territory"
                 append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
-                mapped_columns_log.append(f"⚙️ **Position Linked**: Nokia Column N ('{orig_olt_col}') ← Master Column N ('{matched_master_col}') [Electronics Equipment]")
+                mapped_columns_log.append(f"🌍 **Schema Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}')")
                 continue
 
-        # 🚨 OVERRIDE 4: Nokia Site Status (Column V / Index 21) ← Master Column L (Index 11) [Scope Status]
-        if "site status" in clean_olt_name or c_idx == 21:
-            if len(orig_master_cols) >= 12:
-                matched_master_col = master_df.columns[11]
+        # 🚨 METADATA OVERRIDE 5: Project Type ← OLT Scope
+        if clean_olt_name == "project type":
+            if "olt scope" in m_normalized_cols:
+                matched_master_col = "olt scope"
                 append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
-                mapped_columns_log.append(f"📡 **Position Linked**: Nokia Column V ('{orig_olt_col}') ← Master Column L ('{matched_master_col}') [Scope status]")
+                mapped_columns_log.append(f"📋 **Schema Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}')")
                 continue
 
-        # 🚨 OVERRIDE 5: Nokia Site Survey Actual Date (Column AO / Index 40) ← Master Column X (Index 23) [Survey Date]
-        if "site survey actual date" in clean_olt_name or c_idx == 40:
-            if len(orig_master_cols) >= 24:
-                matched_master_col = master_df.columns[23]
+        # 🚨 METADATA OVERRIDE 6: Site Name ← Site Name
+        if clean_olt_name == "site name":
+            if "site name" in m_normalized_cols:
+                matched_master_col = "site name"
+                append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
+                mapped_columns_log.append(f"📡 **Schema Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}')")
+                continue
+
+        # 🚨 METADATA OVERRIDE 7: Equipment Type ← Electronics Equipment
+        if clean_olt_name == "equipment type":
+            if "electronics equipment" in m_normalized_cols:
+                matched_master_col = "electronics equipment"
+                append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
+                mapped_columns_log.append(f"⚙️ **Schema Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}')")
+                continue
+
+        # 🚨 METADATA OVERRIDE 8: No. of Cards / Number of Cards
+        if clean_olt_name == "no of cards":
+            if "number of cards" in m_normalized_cols:
+                matched_master_col = "number of cards"
+                append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
+                mapped_columns_log.append(f"💳 **Schema Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}')")
+                continue
+
+        # 🚨 METADATA OVERRIDE 9: Site Status ← Scope Status
+        if clean_olt_name == "site status":
+            if "scope status" in m_normalized_cols:
+                matched_master_col = "scope status"
+                append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
+                mapped_columns_log.append(f"📊 **Schema Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}')")
+                continue
+
+        # 🚨 MILESTONE DATE OVERRIDES WITH AUTOMATIC TIMESTAMP STRIPPING
+        if clean_olt_name == "site survey actual date":
+            if "survey date" in m_normalized_cols:
+                matched_master_col = "survey date"
                 raw_dates = missing_records[matched_master_col].tolist()
                 cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
                 append_df[orig_olt_col] = cleaned_dates
-                mapped_columns_log.append(f"📆 **Position Linked**: Nokia Column AO ('{orig_olt_col}') ← Master Column X ('{matched_master_col}') [Survey Date]")
+                mapped_columns_log.append(f"📆 **Milestone Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}')")
                 continue
 
-        # 🚨 OVERRIDE 6: Nokia Installation done Actual Date (Column BD / Index 55) ← Master Column AA (Index 26) [Installed date]
-        if "installation done actual date" in clean_olt_name or c_idx == 55:
-            if len(orig_master_cols) >= 27:
-                matched_master_col = master_df.columns[26]
+        if clean_olt_name == "tssr approval actual date" or clean_olt_name == "tssr submission actual date":
+            if "tssr approved date" in m_normalized_cols:
+                matched_master_col = "tssr approved date"
                 raw_dates = missing_records[matched_master_col].tolist()
                 cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
                 append_df[orig_olt_col] = cleaned_dates
-                mapped_columns_log.append(f"🏗️ **Position Linked**: Nokia Column BD ('{orig_olt_col}') ← Master Column AA ('{matched_master_col}') [Installed date]")
+                mapped_columns_log.append(f"📝 **Milestone Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}')")
                 continue
 
-        # 🚨 OVERRIDE 7: Nokia Powertapping done Actual Date (Column BK / Index 62) ← Master Column AC (Index 28) [Powertapped date]
-        if "powertapping done actual date" in clean_olt_name or c_idx == 62:
-            if len(orig_master_cols) >= 29:
-                matched_master_col = master_df.columns[28]
+        if clean_olt_name == "installation done actual date":
+            if "installed date" in m_normalized_cols:
+                matched_master_col = "installed date"
                 raw_dates = missing_records[matched_master_col].tolist()
                 cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
                 append_df[orig_olt_col] = cleaned_dates
-                mapped_columns_log.append(f"⚡ **Position Linked**: Nokia Column BK ('{orig_olt_col}') ← Master Column AC ('{matched_master_col}') [Powertapped date]")
+                mapped_columns_log.append(f"🏗️ **Milestone Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}')")
                 continue
 
-        # 🚨 OVERRIDE 8: Nokia Integration done Actual Date (Column BS / Index 70) ← Master Column AD (Index 29) [Integrated date]
-        if "integration done actual date" in clean_olt_name or c_idx == 70:
-            if len(orig_master_cols) >= 30:
-                matched_master_col = master_df.columns[29]
+        if clean_olt_name == "powertapping done actual date":
+            if "powertapped date" in m_normalized_cols:
+                matched_master_col = "powertapped date"
                 raw_dates = missing_records[matched_master_col].tolist()
                 cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
                 append_df[orig_olt_col] = cleaned_dates
-                mapped_columns_log.append(f"🌐 **Position Linked**: Nokia Column BS ('{orig_olt_col}') ← Master Column AD ('{matched_master_col}') [Integrated date]")
+                mapped_columns_log.append(f"⚡ **Milestone Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}')")
                 continue
 
-        # 🚨 OVERRIDE 9: Nokia PAT done Actual Date (Column CB / Index 79) ← Master Column AF (Index 31) [Pat'ed]
-        if "pat done actual date" in clean_olt_name or c_idx == 79:
-            if len(orig_master_cols) >= 32:
-                matched_master_col = master_df.columns[31]
+        if clean_olt_name == "integration done actual date":
+            if "integrated date" in m_normalized_cols:
+                matched_master_col = "integrated date"
                 raw_dates = missing_records[matched_master_col].tolist()
                 cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
                 append_df[orig_olt_col] = cleaned_dates
-                mapped_columns_log.append(f"📋 **Position Linked**: Nokia Column CB ('{orig_olt_col}') ← Master Column AF ('{matched_master_col}') [Pat'ed]")
+                mapped_columns_log.append(f"🌐 **Milestone Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}')")
                 continue
 
-        # 🚨 OVERRIDE 10: Nokia PAC Approval done Actual Date (Column CM / Index 90) ← Master Column AI (Index 34) [PAC'ed]
-        if "pac approval done actual date" in clean_olt_name or c_idx == 90:
-            if len(orig_master_cols) >= 35:
-                matched_master_col = master_df.columns[34]
+        if clean_olt_name == "pat done actual date":
+            if "pated" in m_normalized_cols:
+                matched_master_col = "pated"
                 raw_dates = missing_records[matched_master_col].tolist()
                 cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
                 append_df[orig_olt_col] = cleaned_dates
-                mapped_columns_log.append(f"📜 **Position Linked**: Nokia Column CM ('{orig_olt_col}') ← Master Column AI ('{matched_master_col}') [PAC'ed]")
+                mapped_columns_log.append(f"📋 **Milestone Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}')")
                 continue
 
-        # 🚨 OVERRIDE 11: Nokia FAC Approval done Actual Date (Column DC / Index 106) ← Master Column AJ (Index 35) [FAC'ed]
-        if "fac approval done actual date" in clean_olt_name or c_idx == 106:
-            if len(orig_master_cols) >= 36:
-                matched_master_col = master_df.columns[35] # Column AJ is index 35
+        if clean_olt_name == "pac approval actual date" or clean_olt_name == "pac submission actual date":
+            if "paced" in m_normalized_cols:
+                matched_master_col = "paced"
                 raw_dates = missing_records[matched_master_col].tolist()
                 cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
                 append_df[orig_olt_col] = cleaned_dates
-                mapped_columns_log.append(f"🏆 **Position Linked (Date Sanitized)**: Nokia Column DC ('{orig_olt_col}') ← Master Column AJ ('{matched_master_col}') [FAC'ed]")
+                mapped_columns_log.append(f"📜 **Milestone Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}')")
+                continue
+
+        if clean_olt_name == "fac approval actual date" or clean_olt_name == "fac submission actual date":
+            if "faced" in m_normalized_cols:
+                matched_master_col = "faced"
+                raw_dates = missing_records[matched_master_col].tolist()
+                cleaned_dates = [str(d_val).split(" ")[0] if pd.notna(d_val) and str(d_val).lower() != "nan" else "" for d_val in raw_dates]
+                append_df[orig_olt_col] = cleaned_dates
+                mapped_columns_log.append(f"🏆 **Milestone Linked**: OLT ('{orig_olt_col}') ← Master Tracker ('{matched_master_col}')")
                 continue
 
         # Force key tracking structural link
         if "plaid" in clean_olt_name:
             matched_master_col = master_plaid_col_clean
 
-        # Fallback loop name analyzer
+        # Fallback automated logic for anything else
         if not matched_master_col:
             for clean_m_col in master_df.columns:
                 if clean_string_normalization(clean_m_col) == clean_olt_name and clean_olt_name != "":
                     matched_master_col = clean_m_col
                     break
-            
-            if not matched_master_col and clean_olt_name != "":
-                for base_key, variations in alias_map.items():
-                    if any(v in clean_olt_name for v in variations):
-                        for clean_m_col in master_df.columns:
-                            clean_m_norm = clean_string_normalization(clean_m_col)
-                            if any(v == clean_m_norm for v in variations):
-                                matched_master_col = clean_m_col
-                                break
-                    if matched_master_col:
-                        break
 
-        # Map findings into structural columns
+        # Record into structural blueprint
         if matched_master_col:
             append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
-            mapped_columns_log.append(f"🔗 Linked OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'*")
+            if f"'{orig_olt_col}'" not in str(mapped_columns_log):
+                mapped_columns_log.append(f"🔗 Linked OLT **'{orig_olt_col}'** ← Master *'{matched_master_col}'*")
         else:
             append_df[orig_olt_col] = [""] * len(missing_records)
 
-    # Exclude formatting column anomalies from data grid preview frames
+    # Exclude layout noise
     append_df = append_df.loc[:, ~append_df.columns.astype(str).str.contains('track', case=False)]
 
     with st.expander("👀 View automated column connection mapping mapping audit trail"):
@@ -318,12 +346,16 @@ if master_file and olt_file:
     st.dataframe(append_df.head(100), use_container_width=True)
 
     # -----------------------------
-    # 💾 In-Memory Workbook Appending Engine
+    # 💾 Safe Appending Engine Pipeline
     # -----------------------------
     if len(append_df) > 0:
         if st.button("🚀 Merge and Append into OLT Spreadsheet"):
+            append_success = False
+            out_buffer = io.BytesIO()
+            
+            # --- METHOD 1: Clean openpyxl with node-tree error bypass flags ---
             try:
-                wb = openpyxl.load_workbook(io.BytesIO(olt_bytes))
+                wb = openpyxl.load_workbook(io.BytesIO(olt_bytes), data_only=False, keep_links=False)
                 ws = wb[selected_olt_sheet]
                 
                 start_row = ws.max_row + 1
@@ -334,16 +366,39 @@ if master_file and olt_file:
                         else:
                             ws.cell(row=r_idx, column=c_idx, value=value)
                 
-                out_buffer = io.BytesIO()
                 wb.save(out_buffer)
                 out_buffer.seek(0)
-                
-                st.success(f"🎉 Successfully mapped, formatted, and appended {len(append_df)} records directly into the Nokia OLT Tracker sheet!")
+                append_success = True
+                st.success("🎉 Successfully processed using Primary OpenPyXL Engine layout preservation rules!")
+            except Exception as e:
+                st.warning(f"Primary workbook structure protected or containing nested groups. Engaging safe fallback writer... (Error: {e})")
+            
+            # --- METHOD 2: Robust engine fallback via Pandas context writer if openpyxl core fails ---
+            if not append_success:
+                try:
+                    out_buffer = io.BytesIO()
+                    # Reload the pure data array to bypass broken layout tree definitions completely
+                    base_olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
+                    base_olt_df = base_olt_df.loc[:, ~base_olt_df.columns.astype(str).str.startswith('Unnamed:')]
+                    base_olt_df = base_olt_df.loc[:, base_olt_df.columns.notna() & (base_olt_df.columns != "")]
+                    
+                    # Ensure same columns are mapped exactly
+                    append_df.columns = base_olt_df.columns
+                    final_combined_df = pd.concat([base_olt_df, append_df], ignore_index=True)
+                    
+                    with pd.ExcelWriter(out_buffer, engine='openpyxl') as writer:
+                        final_combined_df.to_excel(writer, sheet_name=selected_olt_sheet, index=False)
+                    
+                    out_buffer.seek(0)
+                    append_success = True
+                    st.success("🎉 Successfully processed using Fallback Data-Stream Matrix Engine!")
+                except Exception as err_fallback:
+                    st.error(f"Failed to append entries inside workbook structure: {err_fallback}")
+
+            if append_success:
                 st.download_button(
                     label="⬇️ Download Updated Nokia OLT Tracker File",
                     data=out_buffer.getvalue(),
                     file_name=f"Updated_{olt_file.name}",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-            except Exception as err:
-                st.error(f"Failed to append entries inside workbook structure: {err}")
