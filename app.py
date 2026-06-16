@@ -70,6 +70,67 @@ def detect_sheet(xls: pd.ExcelFile, keywords: list) -> str:
             return sheet
     return xls.sheet_names[0]
 
+def format_value_for_display(val, format_type=None):
+    """
+    Formats a value for proper display, handling different data types
+    """
+    if pd.isna(val) or val is None:
+        return ""
+    
+    # Convert to string
+    val_str = str(val)
+    
+    # Handle float values like 2024.0 -> 2024
+    if format_type == 'year' and isinstance(val, float):
+        if val.is_integer():
+            return str(int(val))
+        else:
+            return val_str
+    
+    # Handle dates - remove time component if present
+    if format_type == 'date':
+        if ' ' in val_str and not val_str.startswith('1900'):
+            return val_str.split(' ')[0]
+    
+    # Handle numeric strings - remove trailing .0 if present
+    if format_type == 'text':
+        if val_str.endswith('.0'):
+            return val_str[:-2]
+    
+    return val_str
+
+def safe_convert_value(val, target_type='str'):
+    """
+    Safely converts a value to the target type
+    """
+    if pd.isna(val) or val is None:
+        return ""
+    
+    if target_type == 'str' or target_type == 'string':
+        # Handle float to string conversion
+        if isinstance(val, float):
+            if val.is_integer():
+                return str(int(val))
+            else:
+                return str(val)
+        return str(val)
+    
+    if target_type == 'int':
+        try:
+            if isinstance(val, float) and val.is_integer():
+                return int(val)
+            return int(float(val))
+        except:
+            return val
+    
+    if target_type == 'float':
+        try:
+            return float(val)
+        except:
+            return val
+    
+    return val
+
 # -----------------------------
 # 📊 DATA QUALITY AND POPULATION ANALYSIS
 # -----------------------------
@@ -243,7 +304,9 @@ def header_mapping_ui(data_df, master_df):
                 # Show sample values
                 sample_vals = data_df[data_col].dropna().head(5).tolist()
                 if sample_vals:
-                    st.write(f"Sample: {', '.join(str(v) for v in sample_vals[:3])}")
+                    # Format sample values for display
+                    formatted_samples = [format_value_for_display(v) for v in sample_vals]
+                    st.write(f"Sample: {', '.join(str(v) for v in formatted_samples[:3])}")
                 else:
                     st.write("(Empty column)")
             
@@ -270,13 +333,7 @@ def header_mapping_ui(data_df, master_df):
                 if selected_master == '-- Add as new column --':
                     st.success("✅ Will add as new column")
                 elif selected_master != '-- Skip --':
-                    # Check if data types match
-                    data_type = str(data_df[data_col].dtype)
-                    master_type = str(master_df[selected_master].dtype)
-                    if data_type == master_type:
-                        st.success("✅ Type match")
-                    else:
-                        st.warning(f"⚠️ {data_type} → {master_type}")
+                    st.info(f"Will update '{selected_master}'")
             
             mapping_data.append({
                 'Data Column': data_col,
@@ -296,13 +353,13 @@ def header_mapping_ui(data_df, master_df):
     return st.session_state.column_mapping
 
 # -----------------------------
-# 📋 MERGE DATA FUNCTION - FIXED
+# 📋 MERGE DATA FUNCTION - FIXED WITH TYPE CONVERSION
 # -----------------------------
 
 def merge_data(data_df, master_df, column_mapping, merge_key=None):
     """
     Merges data from data file into master file based on column mapping
-    Handles different row counts properly
+    Handles different row counts and data type conversions properly
     """
     if not column_mapping:
         st.warning("No columns mapped. Please map columns first.")
@@ -320,17 +377,43 @@ def merge_data(data_df, master_df, column_mapping, merge_key=None):
         if data_col not in data_df.columns:
             continue
             
+        # Get the data series and format for merging
+        data_series = data_df[data_col]
+        
         # Check if we should merge based on a key or just add as new column
         if merge_key and merge_key in data_df.columns and merge_key in master_df.columns:
             # MERGE BY KEY - handles different row counts
             st.info(f"Merging '{data_col}' into '{master_col_action}' using '{merge_key}' as key")
             
-            # Create a dictionary for fast lookup
+            # Create a dictionary for fast lookup with proper value formatting
             data_dict = {}
             for idx, row in data_df.iterrows():
                 key_val = str(row[merge_key]).strip()
                 if key_val and key_val != 'nan' and key_val != '':
-                    data_dict[key_val] = row[data_col]
+                    # Get the value and format it properly
+                    val = row[data_col]
+                    # Handle the specific case for PROJECT or PROGRAM
+                    if 'project' in data_col.lower() or 'program' in data_col.lower():
+                        # Keep as string, remove any .0 if present
+                        if isinstance(val, float):
+                            val = str(int(val)) if val.is_integer() else str(val)
+                        else:
+                            val = str(val)
+                    # Handle YEAR columns
+                    elif 'year' in data_col.lower() or 'YEAR' in data_col:
+                        # Convert to integer if it's a float year
+                        if isinstance(val, float):
+                            if val.is_integer():
+                                val = str(int(val))
+                            else:
+                                val = str(val)
+                        else:
+                            val = str(val)
+                    else:
+                        # Default string conversion
+                        val = str(val) if not pd.isna(val) else ""
+                    
+                    data_dict[key_val] = val
             
             # Update master with data from data file
             matched_count = 0
@@ -358,7 +441,13 @@ def merge_data(data_df, master_df, column_mapping, merge_key=None):
                 for idx, row in data_df.iterrows():
                     key_val = str(row[merge_key]).strip()
                     if key_val and key_val != 'nan' and key_val != '':
-                        data_dict[key_val] = row[data_col]
+                        val = row[data_col]
+                        # Format the value
+                        if isinstance(val, float) and val.is_integer():
+                            val = str(int(val))
+                        else:
+                            val = str(val) if not pd.isna(val) else ""
+                        data_dict[key_val] = val
                 
                 # Fill the new column based on matching keys
                 new_values = []
@@ -383,15 +472,20 @@ def merge_data(data_df, master_df, column_mapping, merge_key=None):
                 })
             else:
                 # Just add as new column with matching row count
-                # If data has more rows than master, we'll pad with empty values
-                # If data has fewer rows, we'll repeat the last value or use empty
-                if len(data_df) >= len(merged_df):
-                    # Data has enough rows, take first N rows
-                    new_values = data_df[data_col].head(len(merged_df)).tolist()
+                # Format values properly
+                formatted_values = []
+                for val in data_series:
+                    if pd.isna(val):
+                        formatted_values.append("")
+                    elif isinstance(val, float) and val.is_integer():
+                        formatted_values.append(str(int(val)))
+                    else:
+                        formatted_values.append(str(val))
+                
+                if len(formatted_values) >= len(merged_df):
+                    new_values = formatted_values[:len(merged_df)]
                 else:
-                    # Data has fewer rows, pad with empty values
-                    new_values = data_df[data_col].tolist()
-                    # Pad with empty strings to match master length
+                    new_values = formatted_values
                     new_values.extend([""] * (len(merged_df) - len(data_df)))
                 
                 merged_df[new_col_name] = new_values
@@ -405,15 +499,19 @@ def merge_data(data_df, master_df, column_mapping, merge_key=None):
                 })
         else:
             # UPDATE EXISTING COLUMN - handles different row counts
-            # This is the tricky case - we need to handle mismatched lengths
-            
             if merge_key and merge_key in data_df.columns and merge_key in master_df.columns:
                 # Use merge key to match records
                 data_dict = {}
                 for idx, row in data_df.iterrows():
                     key_val = str(row[merge_key]).strip()
                     if key_val and key_val != 'nan' and key_val != '':
-                        data_dict[key_val] = row[data_col]
+                        val = row[data_col]
+                        # Format the value
+                        if isinstance(val, float) and val.is_integer():
+                            val = str(int(val))
+                        else:
+                            val = str(val) if not pd.isna(val) else ""
+                        data_dict[key_val] = val
                 
                 matched_count = 0
                 for idx, row in merged_df.iterrows():
@@ -432,7 +530,17 @@ def merge_data(data_df, master_df, column_mapping, merge_key=None):
             else:
                 # Without a merge key, we can only update if row counts match
                 if len(data_df) == len(merged_df):
-                    merged_df[master_col_action] = data_df[data_col].tolist()
+                    # Format values properly
+                    formatted_values = []
+                    for val in data_series:
+                        if pd.isna(val):
+                            formatted_values.append("")
+                        elif isinstance(val, float) and val.is_integer():
+                            formatted_values.append(str(int(val)))
+                        else:
+                            formatted_values.append(str(val))
+                    
+                    merged_df[master_col_action] = formatted_values
                     merged_results.append({
                         'Data Column': data_col,
                         'Master Column': master_col_action,
@@ -444,10 +552,19 @@ def merge_data(data_df, master_df, column_mapping, merge_key=None):
                     # Row counts don't match - create a new column instead
                     new_col_name = f"{master_col_action}_from_data"
                     
-                    if len(data_df) >= len(merged_df):
-                        new_values = data_df[data_col].head(len(merged_df)).tolist()
+                    formatted_values = []
+                    for val in data_series:
+                        if pd.isna(val):
+                            formatted_values.append("")
+                        elif isinstance(val, float) and val.is_integer():
+                            formatted_values.append(str(int(val)))
+                        else:
+                            formatted_values.append(str(val))
+                    
+                    if len(formatted_values) >= len(merged_df):
+                        new_values = formatted_values[:len(merged_df)]
                     else:
-                        new_values = data_df[data_col].tolist()
+                        new_values = formatted_values
                         new_values.extend([""] * (len(merged_df) - len(data_df)))
                     
                     merged_df[new_col_name] = new_values
@@ -585,7 +702,15 @@ if master_file and data_file:
         preview_data = {}
         for data_col, master_col in column_mapping.items():
             if data_col in data_df.columns:
-                preview_data[f"{data_col} → {master_col}"] = data_df[data_col].head(5).tolist()
+                # Format values for preview
+                sample_vals = data_df[data_col].dropna().head(5).tolist()
+                formatted_vals = []
+                for val in sample_vals:
+                    if isinstance(val, float) and val.is_integer():
+                        formatted_vals.append(str(int(val)))
+                    else:
+                        formatted_vals.append(str(val))
+                preview_data[f"{data_col} → {master_col}"] = formatted_vals
         
         if preview_data:
             preview_df = pd.DataFrame(preview_data)
