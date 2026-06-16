@@ -7,9 +7,9 @@ from datetime import datetime
 import re
 from collections import Counter
 
-st.set_page_config(page_title="Master Enrichment Tool", layout="wide")
+st.set_page_config(page_title="OLT Data Copy Tool", layout="wide")
 
-st.title("📊 Master Tracker Enrichment Tool")
+st.title("📋 OLT Data Copy Tool - Copy & Paste Ready")
 
 # -----------------------------
 # ✅ Core Helper Functions
@@ -542,22 +542,207 @@ def header_inspection_ui(df, df_name, key_prefix):
     return st.session_state[rename_key]
 
 # -----------------------------
-# 📊 HEADER MAPPING FOR ENRICHMENT
+# 📋 COPY DATA INTERFACE
+# -----------------------------
+
+def copy_data_interface(mapped_data, column_mapping):
+    """
+    Creates an interface for copying data column by column
+    """
+    st.subheader("📋 Copy Data - Ready for Manual Paste")
+    st.info("Select a column below to view and copy its data. Each column is formatted with headers for easy pasting into your OLT file.")
+    
+    # Let user select which column to copy
+    available_columns = list(mapped_data.columns)
+    
+    # Filter to only columns that have data
+    populated_columns = []
+    for col in available_columns:
+        non_empty = mapped_data[col].notna().sum()
+        if non_empty > 0:
+            populated_columns.append(col)
+    
+    if not populated_columns:
+        st.warning("No populated columns found to copy.")
+        return
+    
+    # Group columns by type
+    st.write("### Select Column to Copy")
+    
+    # Create a selectbox with all populated columns
+    selected_col = st.selectbox(
+        "Choose a column to copy:",
+        options=populated_columns,
+        key="copy_column_select"
+    )
+    
+    if selected_col:
+        st.write(f"### 📊 Data for: {selected_col}")
+        
+        # Get the data for this column
+        data_series = mapped_data[selected_col]
+        
+        # Show statistics
+        total_rows = len(data_series)
+        non_null = data_series.count()
+        null_count = data_series.isna().sum()
+        empty_count = (data_series.astype(str).str.strip() == '').sum() - null_count
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Rows", total_rows)
+        with col2:
+            st.metric("Populated", non_null)
+        with col3:
+            st.metric("Null", null_count)
+        with col4:
+            st.metric("Empty", max(0, empty_count))
+        
+        # Create a copyable text format
+        st.write("### 📋 Copy Ready Format")
+        st.info("Copy the text below and paste it into your OLT file. Each value is on a new line with a row number.")
+        
+        # Format the data for copying - option 1: Simple list
+        format_type = st.radio(
+            "Select format:",
+            ["Simple List (one per line)", "CSV Format (comma separated)", "Tab Separated"],
+            horizontal=True
+        )
+        
+        copy_text = ""
+        header_text = ""
+        
+        # Get the PLAID for reference if available
+        plaid_col = None
+        for col in mapped_data.columns:
+            if 'PLAID' in col.upper() or 'plaid' in col.lower():
+                plaid_col = col
+                break
+        
+        if format_type == "Simple List (one per line)":
+            # Add header
+            header_text = f"Column: {selected_col}\n"
+            header_text += "=" * 50 + "\n"
+            if plaid_col:
+                header_text += f"PLAID\t{selected_col}\n"
+                header_text += "-" * 50 + "\n"
+            copy_text = header_text
+            
+            # Add each value
+            for idx, value in enumerate(data_series):
+                row_num = idx + 1
+                if pd.isna(value) or str(value).strip() == '' or str(value).strip() == 'nan':
+                    value_str = "[EMPTY]"
+                else:
+                    value_str = str(value).strip()
+                
+                if plaid_col:
+                    plaid_val = mapped_data[plaid_col].iloc[idx]
+                    if pd.isna(plaid_val) or str(plaid_val).strip() == '':
+                        plaid_val = "N/A"
+                    copy_text += f"{plaid_val}\t{value_str}\n"
+                else:
+                    copy_text += f"{row_num:4d}. {value_str}\n"
+            
+            st.code(copy_text, language="text")
+            
+        elif format_type == "CSV Format (comma separated)":
+            # Create CSV format with header
+            header = f"Row,{selected_col}"
+            if plaid_col:
+                header = f"Row,PLAID,{selected_col}"
+            
+            rows = []
+            for idx, value in enumerate(data_series):
+                row_num = idx + 1
+                if pd.isna(value) or str(value).strip() == '' or str(value).strip() == 'nan':
+                    value_str = ""
+                else:
+                    value_str = str(value).strip()
+                    # Escape commas if needed
+                    if ',' in value_str:
+                        value_str = f'"{value_str}"'
+                
+                if plaid_col:
+                    plaid_val = mapped_data[plaid_col].iloc[idx]
+                    if pd.isna(plaid_val) or str(plaid_val).strip() == '':
+                        plaid_val = ""
+                    else:
+                        plaid_val = str(plaid_val).strip()
+                    rows.append(f"{row_num},{plaid_val},{value_str}")
+                else:
+                    rows.append(f"{row_num},{value_str}")
+            
+            copy_text = header + "\n" + "\n".join(rows)
+            st.code(copy_text, language="csv")
+            
+        else:  # Tab Separated
+            header = f"Row\t{selected_col}"
+            if plaid_col:
+                header = f"Row\tPLAID\t{selected_col}"
+            
+            rows = []
+            for idx, value in enumerate(data_series):
+                row_num = idx + 1
+                if pd.isna(value) or str(value).strip() == '' or str(value).strip() == 'nan':
+                    value_str = ""
+                else:
+                    value_str = str(value).strip()
+                    # Remove tabs if present
+                    value_str = value_str.replace('\t', ' ')
+                
+                if plaid_col:
+                    plaid_val = mapped_data[plaid_col].iloc[idx]
+                    if pd.isna(plaid_val) or str(plaid_val).strip() == '':
+                        plaid_val = ""
+                    else:
+                        plaid_val = str(plaid_val).strip()
+                    rows.append(f"{row_num}\t{plaid_val}\t{value_str}")
+                else:
+                    rows.append(f"{row_num}\t{value_str}")
+            
+            copy_text = header + "\n" + "\n".join(rows)
+            st.code(copy_text, language="text")
+        
+        # Add copy button using JavaScript
+        st.write("### 📌 Copy to Clipboard")
+        st.info("Select all text above (Ctrl+A or Cmd+A), then copy (Ctrl+C or Cmd+C)")
+        
+        # Add download option for the column data
+        st.write("### 💾 Download as Text File")
+        if st.button(f"Download {selected_col} data as .txt"):
+            st.download_button(
+                label="Click to download",
+                data=copy_text,
+                file_name=f"{selected_col}_data.txt",
+                mime="text/plain"
+            )
+        
+        # Also show a preview of the data in a table
+        with st.expander("📊 Preview Data in Table"):
+            preview_df = pd.DataFrame({
+                'Row': range(1, min(len(data_series), 100) + 1),
+                selected_col: data_series.head(100).tolist()
+            })
+            if plaid_col:
+                preview_df['PLAID'] = mapped_data[plaid_col].head(100).tolist()
+            st.dataframe(preview_df, use_container_width=True)
+
+# -----------------------------
+# 📊 HEADER MAPPING FOR COPY
 # -----------------------------
 
 def get_enrichment_mapping():
     """
-    Defines the mapping between Master Tracker and Nokia OLT Tracker headers for enrichment
-    This maps OLT columns to Master columns for data enrichment
+    Defines the mapping between Master Tracker and Nokia OLT Tracker headers for data copying
     """
     
     mapping = {
-        # Core Identifiers - PLAID is the key
+        # Core Identifiers
         'PLAID': {
             'master_col': 'PLAID',
             'olt_col': 'PLAID',
-            'type': 'key',
-            'description': 'Primary Key Identifier - Used to match records',
+            'description': 'Primary Key Identifier',
             'is_key': True
         },
         
@@ -565,50 +750,43 @@ def get_enrichment_mapping():
         'SITE NAME': {
             'master_col': 'SITE NAME',
             'olt_col': 'SITE NAME',
-            'type': 'text',
-            'description': 'Site Name from OLT'
+            'description': 'Site Name'
         },
         
         # Project Information
         'PROJECT TAGGING': {
             'master_col': 'PROJECT',
             'olt_col': 'PROJECT TAGGING',
-            'type': 'text',
-            'description': 'Project Tagging from OLT'
+            'description': 'Project Tagging'
         },
         'PROJECT TYPE': {
             'master_col': 'OLT SCOPE',
             'olt_col': 'PROJECT TYPE',
-            'type': 'text',
-            'description': 'Project Type from OLT'
+            'description': 'Project Type from OLT Scope'
         },
         
         # Location Information
         'CLUSTER': {
             'master_col': 'CLUSTER',
             'olt_col': 'CLUSTERING',
-            'type': 'text',
-            'description': 'Clustering/Cluster from OLT'
+            'description': 'Clustering/Cluster'
         },
         'PROVINCE': {
             'master_col': 'PROVINCE',
             'olt_col': 'PROVINCE',
-            'type': 'text',
-            'description': 'Province from OLT'
+            'description': 'Province'
         },
         'REGION': {
             'master_col': 'REGION',
             'olt_col': 'REGION',
-            'type': 'text',
-            'description': 'Region from OLT'
+            'description': 'Region'
         },
         
         # Year Information
         'BUILD YEAR': {
             'master_col': 'BUILD YEAR',
             'olt_col': 'BUILD YEAR',
-            'type': 'date_text',
-            'description': 'Build Year from OLT',
+            'description': 'Build Year (formatted with "build")',
             'format': lambda x: f"{str(x).split('.')[0].strip()} build" if pd.notna(x) and str(x).strip() != "" and str(x).lower() != "nan" else ""
         },
         
@@ -616,72 +794,62 @@ def get_enrichment_mapping():
         'EQUIPMENT TYPE': {
             'master_col': 'ELECTRONICS EQUIPMENT',
             'olt_col': 'EQUIPMENT TYPE',
-            'type': 'text',
-            'description': 'Equipment Type from OLT'
+            'description': 'Equipment Type'
         },
         
         # Status Fields
         'SITE STATUS': {
             'master_col': 'SITE STATUS',
             'olt_col': 'SITE STATUS',
-            'type': 'text',
-            'description': 'Site Status from OLT'
+            'description': 'Site Status'
         },
         'SCOPE STATUS': {
             'master_col': 'SCOPE STATUS',
             'olt_col': 'SCOPE STATUS',
-            'type': 'text',
-            'description': 'Scope Status from OLT'
+            'description': 'Scope Status'
         },
         
         # Milestone Dates
         'SURVEY DATE': {
             'master_col': 'SURVEY DATE',
             'olt_col': 'SITE SURVEY ACTUAL DATE',
-            'type': 'date',
-            'description': 'Survey Date from OLT',
+            'description': 'Survey Date',
             'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         'INSTALLED DATE': {
             'master_col': 'INSTALLED DATE',
             'olt_col': 'INSTALLATION DONE ACTUAL DATE',
-            'type': 'date',
-            'description': 'Installation Date from OLT',
+            'description': 'Installation Date',
             'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         'POWER TAPPED DATE': {
             'master_col': 'POWER TAPPED DATE',
             'olt_col': 'POWER TAPPING DONE ACTUAL DATE',
-            'type': 'date',
-            'description': 'Power Tapped Date from OLT',
+            'description': 'Power Tapped Date',
             'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         'INTEGRATED DATE': {
             'master_col': 'INTEGRATED DATE',
             'olt_col': 'INTEGRATION DONE ACTUAL DATE',
-            'type': 'date',
-            'description': 'Integration Date from OLT',
+            'description': 'Integration Date',
             'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         'PAT DATE': {
             'master_col': 'PAT DATE',
             'olt_col': 'PAT DONE ACTUAL DATE',
-            'type': 'date',
-            'description': 'PAT Date from OLT',
+            'description': 'PAT Date',
             'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         'PAC DATE': {
             'master_col': "PAC'ED",
             'olt_col': 'PAC APPROVAL DONE ACTUAL DATE',
-            'type': 'date',
-            'description': 'PAC Date from OLT',
+            'description': 'PAC Date',
             'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         'FAC DATE': {
             'master_col': "FAC'ED",
             'olt_col': 'FAC APPROVAL DONE ACTUAL DATE',
-            'type': 'date',
-            'description': 'FAC Date from OLT',
+            'description': 'FAC Date',
             'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         
@@ -689,22 +857,19 @@ def get_enrichment_mapping():
         'HANDOVER DATE': {
             'master_col': 'HANDOVER DATE',
             'olt_col': 'HANDOVER DATE',
-            'type': 'date',
-            'description': 'Handover Date from OLT',
+            'description': 'Handover Date',
             'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         'TARGET DATE': {
             'master_col': 'TARGET DATE',
             'olt_col': 'TARGET DATE',
-            'type': 'date',
-            'description': 'Target Date from OLT',
+            'description': 'Target Date',
             'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         'REMARKS': {
             'master_col': 'REMARKS',
             'olt_col': 'REMARKS',
-            'type': 'text',
-            'description': 'Remarks from OLT'
+            'description': 'Remarks'
         }
     }
     
@@ -783,7 +948,7 @@ if master_file and olt_file:
     # 📊 DATA QUALITY ANALYSIS
     # -----------------------------
     st.subheader("📊 Data Quality & Population Analysis")
-    st.info("This analysis shows which columns have data and which are empty. This helps identify the correct columns to map.")
+    st.info("This analysis shows which columns have data and which are empty.")
     
     # Analyze both files
     master_pop_df = analyze_column_population(master_df)
@@ -809,7 +974,6 @@ if master_file and olt_file:
     
     with tab1:
         master_rename_mapping = header_inspection_ui(master_df, "Master Tracker", "master")
-        # Apply renaming to master_df
         if master_rename_mapping:
             new_master_columns = []
             for col in master_df.columns:
@@ -819,7 +983,6 @@ if master_file and olt_file:
     
     with tab2:
         olt_rename_mapping = header_inspection_ui(olt_df, "OLT Tracker", "olt")
-        # Apply renaming to olt_df
         if olt_rename_mapping:
             new_olt_columns = []
             for col in olt_df.columns:
@@ -830,7 +993,7 @@ if master_file and olt_file:
     # Confirm after inspection
     st.write("### ✅ Confirm After Header Inspection")
     confirm_inspection = st.checkbox(
-        "I have inspected and renamed headers as needed. Proceed to enrichment.",
+        "I have inspected and renamed headers as needed. Proceed to copy data.",
         key="confirm_inspection"
     )
     
@@ -839,16 +1002,16 @@ if master_file and olt_file:
         st.stop()
 
     # -----------------------------
-    # 📊 ENRICH MASTER WITH OLT DATA
+    # 📊 MAP DATA FOR COPYING
     # -----------------------------
-    st.subheader("🔄 Enrich Master Data with OLT Information")
-    st.info("This will create a new enriched Master file by adding data from the OLT tracker.")
+    st.subheader("🔄 Map Data for Copying")
+    st.info("Mapping Master data to OLT format for easy copying.")
     
     # Get enrichment mapping
     enrichment_mapping = get_enrichment_mapping()
     
     # Display the mapping being used
-    st.write("### 📋 Enrichment Mapping")
+    st.write("### 📋 Field Mapping")
     mapping_display = []
     for field, mapping in enrichment_mapping.items():
         mapping_display.append({
@@ -860,12 +1023,9 @@ if master_file and olt_file:
         })
     st.dataframe(pd.DataFrame(mapping_display), use_container_width=True)
     
-    # Create enriched dataframe - start with a copy of master
-    enriched_df = master_df.copy()
-    
-    # Track enrichment results
-    enrichment_results = []
-    enriched_columns = []
+    # Create mapped data for copying
+    # Start with Master data, but format for OLT
+    mapped_data = pd.DataFrame()
     
     # Get PLAID column for matching
     master_plaid_col = master_plaid_col_clean
@@ -880,9 +1040,6 @@ if master_file and olt_file:
     
     # Process each field in the mapping
     for field, mapping in enrichment_mapping.items():
-        if mapping.get('is_key', False):
-            continue  # Skip the key field
-        
         master_col = mapping['master_col']
         olt_col = mapping['olt_col']
         
@@ -900,16 +1057,14 @@ if master_file and olt_file:
                 actual_olt_col = col
                 break
         
+        # Create data for this column
         if actual_master_col and actual_olt_col:
-            # Create new column name for OLT data
-            new_col_name = f"{actual_master_col}_from_OLT"
+            # Use the OLT column name as the output column name
+            output_col_name = olt_col
             
-            # Enrich the data
-            enriched_values = []
-            matched_count = 0
-            total_rows = len(enriched_df)
-            
-            for idx, row in enriched_df.iterrows():
+            # Prepare data
+            column_data = []
+            for idx, row in master_df.iterrows():
                 plaid_val = str(row[master_plaid_col]).strip()
                 if plaid_val in olt_lookup:
                     olt_row = olt_lookup[plaid_val]
@@ -917,107 +1072,52 @@ if master_file and olt_file:
                     # Apply formatting if defined
                     if mapping.get('format'):
                         olt_value = mapping['format'](olt_value)
-                    enriched_values.append(olt_value)
-                    matched_count += 1
+                    column_data.append(olt_value)
                 else:
-                    # Keep original Master value if no OLT match
-                    enriched_values.append(row[actual_master_col])
+                    # Use Master data if no OLT match
+                    column_data.append(row[actual_master_col])
             
-            # Add the enriched column
-            enriched_df[new_col_name] = enriched_values
-            enriched_columns.append(new_col_name)
-            
-            # Track results
-            enrichment_results.append({
-                'Field': field,
-                'Master Column': actual_master_col,
-                'OLT Column': actual_olt_col,
-                'New Column': new_col_name,
-                'Rows Matched': matched_count,
-                'Match Rate': f"{(matched_count/total_rows*100):.1f}%"
-            })
+            mapped_data[output_col_name] = column_data
+        elif actual_master_col:
+            # If no OLT column, use Master data
+            mapped_data[olt_col] = master_df[actual_master_col]
+        else:
+            # If neither exists, create empty column
+            mapped_data[olt_col] = [""] * len(master_df)
     
-    # Display enrichment results
-    if enrichment_results:
-        st.subheader("📊 Enrichment Results")
-        results_df = pd.DataFrame(enrichment_results)
-        st.dataframe(results_df, use_container_width=True)
-        
-        # Summary statistics
-        total_matches = sum([r['Rows Matched'] for r in enrichment_results])
-        total_possible = len(enriched_df) * len(enrichment_results)
-        st.info(f"✅ Enriched {len(enrichment_results)} columns with OLT data. Total matches: {total_matches:,} out of {total_possible:,} possible ({total_matches/total_possible*100:.1f}%)")
-    else:
-        st.warning("⚠️ No columns were enriched. Please check the mapping configuration.")
+    # Show the mapped data preview
+    st.subheader("📊 Mapped Data Preview")
+    st.write(f"**Total rows:** {len(mapped_data)}")
+    st.dataframe(mapped_data.head(20), use_container_width=True)
     
-    # Show preview of enriched data
-    st.subheader("📊 Enriched Data Preview")
-    
-    # Select columns to show in preview
-    preview_cols = [master_plaid_col]
-    # Add some key master columns
-    for col in ['SITE NAME', 'PROJECT', 'REGION', 'PROVINCE']:
-        if col in enriched_df.columns:
-            preview_cols.append(col)
-    # Add enriched columns
-    preview_cols.extend(enriched_columns[:5])
-    
-    # Filter to available columns
-    available_preview = [col for col in preview_cols if col in enriched_df.columns]
-    
-    st.write(f"**Showing {len(available_preview)} columns, {len(enriched_df)} rows**")
-    st.dataframe(enriched_df[available_preview].head(20), use_container_width=True)
-    
-    # Show all columns
-    with st.expander("📋 View All Columns in Enriched File"):
-        st.write("**All columns in enriched file:**")
-        col_list = pd.DataFrame({
-            'Column Name': enriched_df.columns.tolist(),
-            'Type': [str(dtype) for dtype in enriched_df.dtypes],
-            'Non-Null Count': [enriched_df[col].count() for col in enriched_df.columns]
-        })
-        st.dataframe(col_list, use_container_width=True)
+    # Show which columns were mapped
+    mapped_columns = list(mapped_data.columns)
+    st.info(f"✅ Mapped {len(mapped_columns)} columns ready for copying")
 
     # -----------------------------
-    # 💾 Download Enriched Master File
+    # 📋 COPY DATA INTERFACE
     # -----------------------------
-    st.subheader("💾 Download Enriched Master File")
-    st.info(f"This will download an enriched version of the Master file with {len(enriched_columns)} additional columns from OLT.")
+    st.markdown("---")
+    copy_data_interface(mapped_data, enrichment_mapping)
     
-    # Option to include or exclude OLT columns
-    include_olt = st.checkbox("Include OLT enriched columns in output", value=True)
+    # -----------------------------
+    # 💾 Download Option
+    # -----------------------------
+    st.markdown("---")
+    st.subheader("💾 Download All Data")
+    st.info("Download all mapped data as a CSV file that can be opened in Excel.")
     
-    if include_olt:
-        output_df = enriched_df
-        st.success(f"✅ Downloading with {len(enriched_columns)} OLT-enriched columns")
-    else:
-        output_df = master_df
-        st.info("Downloading original Master format (without OLT columns)")
+    if st.button("📥 Download All Mapped Data as CSV"):
+        csv_buffer = io.StringIO()
+        mapped_data.to_csv(csv_buffer, index=False)
+        csv_data = csv_buffer.getvalue()
+        
+        st.download_button(
+            label="Click to download CSV",
+            data=csv_data,
+            file_name="mapped_olt_data.csv",
+            mime="text/csv"
+        )
     
-    # Download button
-    if st.button("⬇️ Download Enriched Master File", type="primary"):
-        try:
-            out_buffer = io.BytesIO()
-            with pd.ExcelWriter(out_buffer, engine='openpyxl') as writer:
-                output_df.to_excel(writer, sheet_name=selected_master_sheet, index=False)
-            
-            out_buffer.seek(0)
-            
-            # Generate filename
-            if include_olt:
-                file_name = f"Enriched_{master_file.name}"
-            else:
-                file_name = f"Original_{master_file.name}"
-            
-            st.success(f"🎉 Successfully created file with {len(output_df)} rows and {len(output_df.columns)} columns!")
-            
-            st.download_button(
-                label=f"⬇️ Download {'Enriched' if include_olt else 'Original'} Master Tracker File",
-                data=out_buffer.getvalue(),
-                file_name=file_name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        except Exception as err:
-            st.error(f"Failed to process file: {err}")
 else:
     st.info("Please upload both files to proceed.")
