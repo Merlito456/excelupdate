@@ -524,10 +524,10 @@ if master_file and olt_file:
         
         validation_results.append(result)
     
-    # Display validation results
+    # Display validation results - FIXED applymap to map
     validation_df = pd.DataFrame(validation_results)
     
-    # Color coding for status
+    # Color coding for status using map instead of applymap
     def color_status(val):
         if '✅' in str(val):
             return 'background-color: #90EE90'
@@ -537,7 +537,9 @@ if master_file and olt_file:
             return 'background-color: #FF6B6B'
         return ''
     
-    st.dataframe(validation_df.style.applymap(color_status, subset=['Status']), use_container_width=True)
+    # Apply styling using map
+    styled_validation = validation_df.style.map(color_status, subset=['Status'])
+    st.dataframe(styled_validation, use_container_width=True)
     
     # Show detailed validation warnings
     warnings = validation_df[validation_df['Status'].str.contains('⚠️|❌', na=False)]
@@ -753,7 +755,9 @@ if master_file and olt_file:
                 return 'background-color: #FFA500'
             return ''
         
-        st.dataframe(mapping_df.style.applymap(color_confidence, subset=['confidence']), use_container_width=True)
+        # Apply styling using map
+        styled_mapping = mapping_df.style.map(color_confidence, subset=['confidence'])
+        st.dataframe(styled_mapping, use_container_width=True)
     
     # Exclude formatting column anomalies
     append_df = append_df.loc[:, ~append_df.columns.astype(str).str.contains('track', case=False)]
