@@ -269,6 +269,31 @@ def detect_data_category(series):
     return best_category, best_score, sample_str.head(5).tolist()
 
 # -----------------------------
+# 📋 RAW DATA VIEWER - NEW
+# -----------------------------
+
+def raw_data_viewer(xls, sheet_name, header_idx):
+    """
+    Shows raw data to help identify where headers are
+    """
+    st.subheader("🔍 Raw Data Viewer")
+    st.info("This shows the raw data from your file to help identify where the headers are located.")
+    
+    # Read the first few rows without headers
+    preview_df = xls.parse(sheet_name, nrows=10, header=None)
+    
+    st.write(f"**Sheet:** {sheet_name}")
+    st.write(f"**Showing rows 0-9 (header row index is {header_idx + 1}):**")
+    
+    # Display the raw data
+    st.dataframe(preview_df, use_container_width=True)
+    
+    # Highlight where the header is
+    if header_idx < len(preview_df):
+        st.info(f"📌 Row {header_idx + 1} is currently selected as the header row.")
+        st.write("**If your headers are in a different row, adjust the 'Header Row Index' in the sidebar.**")
+
+# -----------------------------
 # 📋 MANUAL HEADER MAPPING UI
 # -----------------------------
 
@@ -280,31 +305,27 @@ def manual_header_mapping_ui(data_df, master_df):
     st.subheader("🔗 Manual Header Mapping")
     st.info("Map Data File columns to Master File columns. Select which Data File columns you want to map, then choose the corresponding Master File column for each.")
     
+    # Get columns
+    data_columns = data_df.columns.tolist()
+    master_columns = master_df.columns.tolist()
+    
     # Show both file headers side by side
     col1, col2 = st.columns(2)
     with col1:
         st.write("### 📋 Data File Columns (Source)")
-        data_cols = data_df.columns.tolist()
-        st.write(", ".join(data_cols))
-        st.caption(f"Total: {len(data_cols)} columns")
-        
-        # Show sample data
-        with st.expander("📊 Data File Sample"):
-            st.dataframe(data_df.head(5), use_container_width=True)
+        if data_columns:
+            st.write(", ".join(data_columns))
+            st.caption(f"Total: {len(data_columns)} columns")
+        else:
+            st.warning("⚠️ No Data columns detected!")
     
     with col2:
         st.write("### 📋 Master File Columns (Target)")
-        master_cols = master_df.columns.tolist()
-        if master_cols:
-            st.write(", ".join(master_cols))
-            st.caption(f"Total: {len(master_cols)} columns")
-            
-            # Show sample data
-            with st.expander("📊 Master File Sample"):
-                st.dataframe(master_df.head(5), use_container_width=True)
+        if master_columns:
+            st.write(", ".join(master_columns))
+            st.caption(f"Total: {len(master_columns)} columns")
         else:
-            st.error("❌ No columns detected in Master File! Please check the header row index.")
-            st.write("**Try adjusting the 'Master Header Row Index' in the sidebar.**")
+            st.warning("⚠️ No Master columns detected! Please check the header row index.")
     
     st.markdown("---")
     
@@ -312,12 +333,14 @@ def manual_header_mapping_ui(data_df, master_df):
     if 'manual_mapping' not in st.session_state:
         st.session_state.manual_mapping = {}
     
-    # Get all data columns and master columns
-    data_columns = data_df.columns.tolist()
-    master_columns = master_df.columns.tolist()
-    
+    # Check if we have columns to map
     if not master_columns:
-        st.warning("⚠️ No Master columns detected. Please adjust the 'Master Header Row Index' in the sidebar.")
+        st.error("❌ No Master columns detected. Please adjust the 'Master Header Row Index' in the sidebar.")
+        st.info("💡 Tip: Use the 'Raw Data Viewer' below to find the correct header row.")
+        return st.session_state.manual_mapping
+    
+    if not data_columns:
+        st.error("❌ No Data columns detected. Please adjust the 'Data Header Row Index' in the sidebar.")
         return st.session_state.manual_mapping
     
     # Get currently mapped columns
@@ -690,15 +713,35 @@ if master_file and data_file:
     selected_master_sheet = st.sidebar.selectbox("Master Sheet Name", master_xls.sheet_names, index=master_xls.sheet_names.index(auto_master_sheet))
     selected_data_sheet = st.sidebar.selectbox("Data Sheet Name", data_xls.sheet_names, index=data_xls.sheet_names.index(auto_data_sheet))
 
+    # Auto detect header rows
     auto_master_idx = find_dynamic_header_row(master_xls, selected_master_sheet)
     auto_data_idx = find_dynamic_header_row(data_xls, selected_data_sheet)
     
-    master_header_idx = st.sidebar.number_input("Master Header Row Index (1-based)", min_value=1, value=auto_master_idx + 1) - 1
-    data_header_idx = st.sidebar.number_input("Data Header Row Index (1-based)", min_value=1, value=auto_data_idx + 1) - 1
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📌 Header Row Settings")
+    st.sidebar.caption("Adjust these if headers are not detected correctly")
+    
+    master_header_idx = st.sidebar.number_input(
+        "Master Header Row Index (1-based)", 
+        min_value=1, 
+        value=auto_master_idx + 1,
+        help="Row number where the column headers are located. Try 1, 2, or 3 if not detected."
+    ) - 1
+    
+    data_header_idx = st.sidebar.number_input(
+        "Data Header Row Index (1-based)", 
+        min_value=1, 
+        value=auto_data_idx + 1,
+        help="Row number where the column headers are located."
+    ) - 1
 
     # Parse dataframes with the selected header row
-    master_df = master_xls.parse(selected_master_sheet, header=master_header_idx)
-    data_df = data_xls.parse(selected_data_sheet, header=data_header_idx)
+    try:
+        master_df = master_xls.parse(selected_master_sheet, header=master_header_idx)
+        data_df = data_xls.parse(selected_data_sheet, header=data_header_idx)
+    except Exception as e:
+        st.error(f"Error parsing files: {e}")
+        st.stop()
 
     # Noise filtration
     master_df = master_df.loc[:, ~master_df.columns.astype(str).str.startswith('Unnamed:')]
@@ -712,11 +755,11 @@ if master_file and data_file:
     data_df.columns = data_df_cleaned.columns
 
     # -----------------------------
-    # 📊 FILE INFORMATION
+    # 📊 FILE INFORMATION & RAW DATA VIEWER
     # -----------------------------
     st.subheader("📊 File Information")
     
-    # Show raw headers before cleaning for debugging
+    # Show file info
     col1, col2 = st.columns(2)
     with col1:
         st.write(f"**Master File:** {master_file.name}")
@@ -729,7 +772,7 @@ if master_file and data_file:
         if len(master_df.columns) > 0:
             st.write(", ".join(master_df.columns.tolist()))
         else:
-            st.warning("⚠️ No headers detected! Try adjusting the 'Master Header Row Index'.")
+            st.error("❌ No headers detected! Use the Raw Data Viewer below to find the correct row.")
     
     with col2:
         st.write(f"**Data File:** {data_file.name}")
@@ -740,11 +783,36 @@ if master_file and data_file:
         # Show actual headers
         st.write("**Data Headers:**")
         st.write(", ".join(data_df.columns.tolist()))
+    
+    # Raw Data Viewer
+    st.markdown("---")
+    st.subheader("🔍 Raw Data Viewer - Find Your Headers")
+    st.info("Use this viewer to see the raw data and identify where your headers are located.")
+    
+    # Select which file to view
+    view_file = st.radio(
+        "Select file to view:",
+        ["Master File", "Data File"],
+        horizontal=True
+    )
+    
+    if view_file == "Master File":
+        raw_data_viewer(master_xls, selected_master_sheet, master_header_idx)
+    else:
+        raw_data_viewer(data_xls, selected_data_sheet, data_header_idx)
+    
+    st.info("💡 **Tip:** If you see your headers in row 1, 2, or 3, adjust the 'Header Row Index' in the sidebar accordingly.")
 
     # -----------------------------
     # 📊 COLUMN MAPPING
     # -----------------------------
     st.markdown("---")
+    
+    # Check if we have columns to work with
+    if len(master_df.columns) == 0:
+        st.warning("⚠️ No Master columns detected. Please adjust the 'Master Header Row Index' in the sidebar.")
+        st.stop()
+    
     column_mapping = header_mapping_ui(data_df, master_df)
 
     # -----------------------------
