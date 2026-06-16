@@ -669,26 +669,31 @@ if master_file and olt_file:
             st.dataframe(duplicates_only, use_container_width=True)
 
     # -----------------------------
-    # 📉 Missing Records Analysis
+    # 📉 Missing Records Analysis (For Information Only)
     # -----------------------------
     master_clean_df = master_df[master_df[master_plaid_col_clean].str.lower() != "nan"].copy()
     missing_mask = ~master_clean_df[master_plaid_col_clean].isin(olt_df[olt_plaid_col_clean])
     missing_records = master_clean_df[missing_mask].copy()
 
-    st.subheader("❌ Unmapped Raw Master Entries (Missing from OLT)")
-    st.write(f"Total Missing Rows Isolated: **{len(missing_records)}**")
+    st.subheader("ℹ️ Missing Records Analysis (Information Only)")
+    st.write(f"Total rows in Master: **{len(master_df)}**")
+    st.write(f"Total rows already in OLT: **{len(olt_df)}**")
+    st.write(f"Rows that would be NEW additions: **{len(missing_records)}**")
+    st.write(f"Rows that would UPDATE existing entries: **{len(master_df) - len(missing_records)}**")
     
     if len(missing_records) > 0:
-        missing_with_dup, missing_styled = highlight_duplicates(missing_records, master_plaid_col_clean)
-        st.dataframe(missing_styled, use_container_width=True)
+        with st.expander("📋 View Missing Records (New Additions)"):
+            missing_with_dup, missing_styled = highlight_duplicates(missing_records, master_plaid_col_clean)
+            st.dataframe(missing_styled, use_container_width=True)
 
     # -----------------------------
-    # 🔄 Automated Mapping with Data Verification
+    # 🔄 Map ALL Master Records to OLT Format
     # -----------------------------
-    st.subheader("🔄 Automated Column Mapping with Data Verification")
+    st.subheader("🔄 Mapping ALL Master Records to OLT Format")
+    st.info(f"Mapping all {len(master_df)} records from Master to OLT format...")
     
-    # Create append DataFrame with OLT columns
-    append_df = pd.DataFrame(columns=olt_df.columns)
+    # Create a DataFrame to hold ALL mapped records
+    all_mapped_df = pd.DataFrame(columns=olt_df.columns)
     mapped_columns_log = []
     mapping_issues = []
     
@@ -793,16 +798,16 @@ if master_file and olt_file:
                 'description': 'Primary Key Identifier'
             })
         
-        # Apply the mapping
+        # Apply the mapping to ALL records (not just missing ones)
         if matched_master_col:
             # Apply any formatting function if defined
             if formatting_func:
-                raw_values = missing_records[matched_master_col].tolist()
-                append_df[olt_col] = [formatting_func(val) for val in raw_values]
+                raw_values = master_df[matched_master_col].tolist()
+                all_mapped_df[olt_col] = [formatting_func(val) for val in raw_values]
             else:
-                append_df[olt_col] = missing_records[matched_master_col].tolist()
+                all_mapped_df[olt_col] = master_df[matched_master_col].tolist()
         else:
-            append_df[olt_col] = [""] * len(missing_records)
+            all_mapped_df[olt_col] = [""] * len(master_df)
             mapped_columns_log.append({
                 'olt_col': olt_col,
                 'master_col': 'No match found',
@@ -820,7 +825,7 @@ if master_file and olt_file:
     
     # Display mapping audit trail
     with st.expander("👀 View Detailed Column Mapping Audit Trail"):
-        mapping_df = pd.DataFrame(mapped_columns_log)
+        mapping_df_display = pd.DataFrame(mapped_columns_log)
         # Color code confidence levels
         def color_confidence(val):
             if val == 'High':
@@ -832,28 +837,29 @@ if master_file and olt_file:
             return ''
         
         # Apply styling using map
-        styled_mapping = mapping_df.style.map(color_confidence, subset=['confidence'])
+        styled_mapping = mapping_df_display.style.map(color_confidence, subset=['confidence'])
         st.dataframe(styled_mapping, use_container_width=True)
     
     # Exclude formatting column anomalies
-    append_df = append_df.loc[:, ~append_df.columns.astype(str).str.contains('track', case=False)]
+    all_mapped_df = all_mapped_df.loc[:, ~all_mapped_df.columns.astype(str).str.contains('track', case=False)]
     
-    st.subheader("📋 Output Blueprint (Ready to append into Nokia OLT)")
-    st.dataframe(append_df.head(100), use_container_width=True)
+    st.subheader("📋 All Mapped Records Preview")
+    st.write(f"Total mapped records: **{len(all_mapped_df)}**")
+    st.dataframe(all_mapped_df.head(100), use_container_width=True)
     
     # Show preview of filled data with verification
-    if len(append_df) > 0:
-        st.subheader("📊 Sample Filled Data Preview with Verification")
+    if len(all_mapped_df) > 0:
+        st.subheader("📊 Data Population Summary")
         
         # Show which columns have data
         filled_cols = []
-        for col in append_df.columns:
-            non_null_count = append_df[col].notna().sum()
+        for col in all_mapped_df.columns:
+            non_null_count = all_mapped_df[col].notna().sum()
             if non_null_count > 0:
                 filled_cols.append({
                     'Column': col,
                     'Filled Rows': non_null_count,
-                    'Fill Rate': f"{non_null_count/len(append_df)*100:.1f}%"
+                    'Fill Rate': f"{non_null_count/len(all_mapped_df)*100:.1f}%"
                 })
         
         if filled_cols:
@@ -861,15 +867,18 @@ if master_file and olt_file:
             st.dataframe(filled_df, use_container_width=True)
         
         # Preview data
-        preview_cols = [col for col in append_df.columns if append_df[col].notna().any()][:10]
+        preview_cols = [col for col in all_mapped_df.columns if all_mapped_df[col].notna().any()][:10]
         if preview_cols:
-            st.dataframe(append_df[preview_cols].head(10), use_container_width=True)
+            st.dataframe(all_mapped_df[preview_cols].head(10), use_container_width=True)
 
     # -----------------------------
-    # 💾 Download Merged File
+    # 💾 Download Merged File - APPEND ALL RECORDS
     # -----------------------------
-    if len(append_df) > 0:
-        if st.button("🚀 Merge and Append into OLT Spreadsheet"):
+    if len(all_mapped_df) > 0:
+        st.subheader("💾 Append All Records to OLT")
+        st.info(f"⚠️ This will **APPEND** all {len(all_mapped_df)} records from Master to the OLT file.")
+        
+        if st.button("🚀 Append ALL Records to OLT Spreadsheet"):
             try:
                 # Reload the original OLT file to preserve original column names
                 base_olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
@@ -881,48 +890,41 @@ if master_file and olt_file:
                 clean_to_original = {}
                 for orig_col in original_olt_columns:
                     clean_col = clean_string_normalization(orig_col)
-                    # Find the matching cleaned column in append_df
-                    for clean_name in append_df.columns:
+                    # Find the matching cleaned column in all_mapped_df
+                    for clean_name in all_mapped_df.columns:
                         if clean_string_normalization(clean_name) == clean_string_normalization(orig_col):
                             clean_to_original[clean_name] = orig_col
                             break
                 
-                # Rename append_df columns to match original OLT file
-                append_df_renamed = append_df.copy()
+                # Rename all_mapped_df columns to match original OLT file
+                all_mapped_df_renamed = all_mapped_df.copy()
                 for clean_name, orig_name in clean_to_original.items():
-                    if clean_name in append_df_renamed.columns:
-                        append_df_renamed.rename(columns={clean_name: orig_name}, inplace=True)
+                    if clean_name in all_mapped_df_renamed.columns:
+                        all_mapped_df_renamed.rename(columns={clean_name: orig_name}, inplace=True)
                 
                 # Get the PLAID column in original names
                 base_plaid_col = chosen_olt_plaid_raw
-                append_plaid_col = base_plaid_col  # Use the same column name
                 
-                # Ensure the PLAID column exists in append_df_renamed
-                if append_plaid_col not in append_df_renamed.columns:
+                # Ensure the PLAID column exists in all_mapped_df_renamed
+                if base_plaid_col not in all_mapped_df_renamed.columns:
                     # Try to find it by checking cleaned names
-                    for col in append_df_renamed.columns:
+                    for col in all_mapped_df_renamed.columns:
                         if clean_string_normalization(col) == clean_string_normalization('PLAID'):
-                            append_plaid_col = col
+                            base_plaid_col = col
                             break
                 
-                # Filter out rows that already exist in OLT
-                existing_plaids = set(base_olt_df[base_plaid_col].astype(str).str.strip())
-                append_plaid_values = append_df_renamed[append_plaid_col].astype(str).str.strip()
-                new_records_mask = ~append_plaid_values.isin(existing_plaids)
-                new_records = append_df_renamed[new_records_mask]
+                # Filter out records with empty PLAID
+                valid_records = all_mapped_df_renamed[all_mapped_df_renamed[base_plaid_col].astype(str).str.strip() != '']
+                valid_records = valid_records[valid_records[base_plaid_col].astype(str).str.strip() != 'nan']
                 
-                # Also filter out records with empty PLAID
-                new_records = new_records[new_records[append_plaid_col].astype(str).str.strip() != '']
-                new_records = new_records[new_records[append_plaid_col].astype(str).str.strip() != 'nan']
+                st.info(f"📊 **Data Summary:**\n"
+                       f"- Total records to append: {len(all_mapped_df)}\n"
+                       f"- Valid records (with PLAID): {len(valid_records)}\n"
+                       f"- Skipped invalid records: {len(all_mapped_df) - len(valid_records)}")
                 
-                if len(new_records) > 0:
-                    # Data verification summary
-                    st.info(f"📊 **Data Summary:**\n"
-                           f"- Total missing records: {len(append_df)}\n"
-                           f"- New records to add: {len(new_records)}\n"
-                           f"- Skipped existing records: {len(append_df) - len(new_records)}")
-                    
-                    final_combined_df = pd.concat([base_olt_df, new_records], ignore_index=True)
+                if len(valid_records) > 0:
+                    # Append ALL valid records to the OLT file
+                    final_combined_df = pd.concat([base_olt_df, valid_records], ignore_index=True)
                     
                     out_buffer = io.BytesIO()
                     with pd.ExcelWriter(out_buffer, engine='openpyxl') as writer:
@@ -930,7 +932,8 @@ if master_file and olt_file:
                     
                     out_buffer.seek(0)
                     
-                    st.success(f"🎉 Successfully merged and processed {len(new_records)} new records!")
+                    st.success(f"🎉 Successfully appended {len(valid_records)} records to the OLT file!")
+                    st.write(f"**Total rows in new OLT file:** {len(final_combined_df)}")
                     st.download_button(
                         label="⬇️ Download Updated Nokia OLT Tracker File",
                         data=out_buffer.getvalue(),
@@ -938,7 +941,7 @@ if master_file and olt_file:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 else:
-                    st.warning("⚠️ All records already exist in the OLT tracker or have invalid PLAID values. No new records to append.")
+                    st.warning("⚠️ No valid records to append. All records have empty or invalid PLAID values.")
                     
             except Exception as err:
                 st.error(f"Failed to process file: {err}")
