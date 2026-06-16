@@ -93,6 +93,135 @@ def highlight_duplicates(df, master_plaid_col):
     return df_with_highlight, styled_df
 
 # -----------------------------
+# 📊 DATA QUALITY AND POPULATION ANALYSIS
+# -----------------------------
+
+def analyze_column_population(df):
+    """
+    Analyzes which columns are populated and their data quality
+    Returns: DataFrame with population statistics
+    """
+    results = []
+    for col in df.columns:
+        total_rows = len(df)
+        non_null = df[col].count()
+        null_count = df[col].isna().sum()
+        empty_strings = (df[col].astype(str).str.strip() == '').sum()
+        empty_strings = empty_strings - null_count  # Don't double count nulls
+        
+        # Calculate effective population (non-null and non-empty)
+        effective_populated = non_null - empty_strings if non_null > 0 else 0
+        population_pct = (effective_populated / total_rows * 100) if total_rows > 0 else 0
+        
+        # Determine category
+        if population_pct == 0:
+            status = "🔴 Empty"
+        elif population_pct < 30:
+            status = "🟡 Sparse"
+        elif population_pct < 70:
+            status = "🟠 Partial"
+        else:
+            status = "🟢 Well Populated"
+        
+        # Get data category
+        category, confidence, samples = detect_data_category(df[col])
+        
+        results.append({
+            'Column': col,
+            'Total Rows': total_rows,
+            'Populated': effective_populated,
+            'Null': null_count,
+            'Empty Strings': empty_strings,
+            'Population %': f"{population_pct:.1f}%",
+            'Status': status,
+            'Data Category': f"{category} ({confidence:.0%})" if confidence > 0 else category,
+            'Sample Values': ', '.join(str(s) for s in samples[:3]) if samples else ''
+        })
+    
+    return pd.DataFrame(results)
+
+def suggest_column_mappings(master_population_df, olt_population_df, header_mapping):
+    """
+    Suggests mappings based on population patterns and column names
+    """
+    suggestions = []
+    
+    # Get populated columns from both files
+    master_populated = master_population_df[master_population_df['Population %'].str.rstrip('%').astype(float) > 10]['Column'].tolist()
+    olt_populated = olt_population_df[olt_population_df['Population %'].str.rstrip('%').astype(float) > 10]['Column'].tolist()
+    
+    # For each mapping, check if columns are populated
+    for field, mapping in header_mapping.items():
+        master_col = mapping['master_col']
+        olt_col = mapping['olt_col']
+        
+        # Find actual column names
+        master_actual = None
+        olt_actual = None
+        
+        for col in master_population_df['Column']:
+            if clean_string_normalization(col) == clean_string_normalization(master_col):
+                master_actual = col
+                break
+        
+        for col in olt_population_df['Column']:
+            if clean_string_normalization(col) == clean_string_normalization(olt_col):
+                olt_actual = col
+                break
+        
+        # Get population status
+        master_pop = master_population_df[master_population_df['Column'] == master_actual]['Population %'].values[0] if master_actual else "0.0%"
+        olt_pop = olt_population_df[olt_population_df['Column'] == olt_actual]['Population %'].values[0] if olt_actual else "0.0%"
+        
+        # Suggest alternative mappings if columns are empty
+        suggestion = {
+            'Field': field,
+            'Description': mapping['description'],
+            'Master Expected': master_actual or master_col,
+            'Master Population': master_pop if master_actual else "❌ Not Found",
+            'OLT Expected': olt_actual or olt_col,
+            'OLT Population': olt_pop if olt_actual else "❌ Not Found",
+            'Issue': None,
+            'Suggestion': None
+        }
+        
+        # Check for population issues
+        if master_actual and float(master_pop.rstrip('%')) < 5:
+            suggestion['Issue'] = "Master column has very few populated values"
+            suggestion['Suggestion'] = "Check if this is the correct column"
+        
+        if olt_actual and float(olt_pop.rstrip('%')) < 5:
+            suggestion['Issue'] = "OLT column has very few populated values"
+            suggestion['Suggestion'] = "Check if this is the correct column"
+        
+        # Check if expected columns don't exist
+        if not master_actual:
+            suggestion['Issue'] = f"Expected master column '{master_col}' not found"
+            # Suggest alternative from populated columns
+            for pop_col in master_populated:
+                if clean_string_normalization(field) in clean_string_normalization(pop_col):
+                    suggestion['Suggestion'] = f"Consider using '{pop_col}' instead"
+                    break
+                elif any(keyword in clean_string_normalization(pop_col) for keyword in ['name', 'site', 'location', 'code']):
+                    if not suggestion['Suggestion']:
+                        suggestion['Suggestion'] = f"Suggested alternative: '{pop_col}'"
+        
+        if not olt_actual:
+            suggestion['Issue'] = f"Expected OLT column '{olt_col}' not found"
+            for pop_col in olt_populated:
+                if clean_string_normalization(field) in clean_string_normalization(pop_col):
+                    suggestion['Suggestion'] = f"Consider using '{pop_col}' instead"
+                    break
+                elif any(keyword in clean_string_normalization(pop_col) for keyword in ['name', 'site', 'location', 'code']):
+                    if not suggestion['Suggestion']:
+                        suggestion['Suggestion'] = f"Suggested alternative: '{pop_col}'"
+        
+        if suggestion['Issue'] or suggestion['Suggestion']:
+            suggestions.append(suggestion)
+    
+    return pd.DataFrame(suggestions)
+
+# -----------------------------
 # 📊 DATA CATEGORY DETECTION FUNCTIONS
 # -----------------------------
 
@@ -361,7 +490,27 @@ def header_inspection_ui(df, df_name, key_prefix):
     Returns: dictionary mapping original to new column names
     """
     st.write(f"### 🔍 Inspect and Rename Headers - {df_name}")
-    st.info(f"Total columns: {len(df.columns)}")
+    
+    # Show data quality summary first
+    st.write("#### 📊 Data Population Summary")
+    pop_df = analyze_column_population(df)
+    
+    # Color code the status column
+    def color_status(val):
+        if '🟢' in str(val):
+            return 'background-color: #90EE90'
+        elif '🟠' in str(val):
+            return 'background-color: #FFD700'
+        elif '🟡' in str(val):
+            return 'background-color: #FFA500'
+        elif '🔴' in str(val):
+            return 'background-color: #FF6B6B'
+        return ''
+    
+    styled_pop = pop_df.style.map(color_status, subset=['Status'])
+    st.dataframe(styled_pop, use_container_width=True)
+    
+    st.info(f"Total columns: {len(df.columns)} | Well Populated: {len(pop_df[pop_df['Status'] == '🟢 Well Populated'])} | Empty: {len(pop_df[pop_df['Status'] == '🔴 Empty'])}")
     
     # Initialize session state for column renaming
     rename_key = f"{key_prefix}_rename_mapping"
@@ -451,15 +600,18 @@ def header_inspection_ui(df, df_name, key_prefix):
     mapping_data = []
     for orig_col in df.columns:
         new_col = st.session_state[rename_key].get(orig_col, orig_col)
-        status = "✅ Renamed" if new_col != orig_col else "Original"
+        # Get population status
+        pop_status = pop_df[pop_df['Column'] == orig_col]['Status'].values[0] if orig_col in pop_df['Column'].values else 'Unknown'
         mapping_data.append({
             'Original Name': orig_col,
             'Current Name': new_col,
-            'Status': status
+            'Status': '✅ Renamed' if new_col != orig_col else 'Original',
+            'Population': pop_status
         })
     
     mapping_df = pd.DataFrame(mapping_data)
-    st.dataframe(mapping_df, use_container_width=True)
+    styled_mapping = mapping_df.style.map(color_status, subset=['Population'])
+    st.dataframe(styled_mapping, use_container_width=True)
     
     # Button to reset all renames
     if st.button(f"🔄 Reset All Column Names for {df_name}", key=f"{key_prefix}_reset"):
@@ -741,6 +893,38 @@ if master_file and olt_file:
     olt_df.columns = olt_df_cleaned.columns
 
     # -----------------------------
+    # 📊 DATA QUALITY ANALYSIS - FIRST
+    # -----------------------------
+    st.subheader("📊 Data Quality & Population Analysis")
+    st.info("This analysis shows which columns have data and which are empty. This helps identify the correct columns to map.")
+    
+    # Analyze both files
+    master_pop_df = analyze_column_population(master_df)
+    olt_pop_df = analyze_column_population(olt_df)
+    
+    # Show population summary
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("**📋 Master Tracker - Column Population**")
+        st.dataframe(master_pop_df, use_container_width=True)
+    with col2:
+        st.write("**📋 OLT Tracker - Column Population**")
+        st.dataframe(olt_pop_df, use_container_width=True)
+    
+    # Get mapping configuration
+    header_mapping = get_header_mapping()
+    
+    # Suggest mappings based on population
+    suggestions_df = suggest_column_mappings(master_pop_df, olt_pop_df, header_mapping)
+    
+    if len(suggestions_df) > 0:
+        st.subheader("💡 Column Mapping Suggestions")
+        st.info("Based on column population analysis, here are some suggestions for mapping issues:")
+        st.dataframe(suggestions_df, use_container_width=True)
+    else:
+        st.success("✅ All expected columns appear to be properly mapped with good data population!")
+
+    # -----------------------------
     # 📊 HEADER INSPECTION AND RENAMING
     # -----------------------------
     st.subheader("🔍 Header Inspection and Renaming")
@@ -799,9 +983,6 @@ if master_file and olt_file:
     st.info("2. **Data Pattern Analysis** - Uniqueness and repetition patterns")
     st.info("3. **Actual Data Similarity** - Overlap in actual values")
 
-    # Get mapping configuration
-    header_mapping = get_header_mapping()
-    
     # Create interactive mapping verification
     st.write("### 📋 Comprehensive Column Mapping Verification")
     
