@@ -92,106 +92,139 @@ def highlight_duplicates(df, master_plaid_col):
     return df_with_highlight, styled_df
 
 # -----------------------------
-# 📊 DATA VALIDATION FUNCTIONS
+# 📊 DATA CATEGORY DETECTION FUNCTIONS
 # -----------------------------
 
-def validate_data_type(series, expected_type):
+def detect_data_category(series):
     """
-    Validates if the data in a series matches the expected type
-    Returns: (is_valid, sample_values, description)
+    Detects the category/type of data in a series without looking at specific values
+    Returns: (category, confidence, sample_values)
     """
     if len(series) == 0:
-        return False, [], "Empty series"
+        return "Empty", 0, []
     
     # Get non-null values for sampling
     sample = series.dropna().head(100)
     if len(sample) == 0:
-        return False, [], "All values are null"
+        return "Empty", 0, []
     
     sample_str = sample.astype(str).str.strip()
     sample_str = sample_str[sample_str != '']
     sample_str = sample_str[sample_str != 'nan']
     
     if len(sample_str) == 0:
-        return False, [], "No valid values"
+        return "Empty", 0, []
     
-    # Check data patterns
-    date_pattern = r'^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$|^\d{4}[/-]\d{1,2}[/-]\d{1,2}$|^\d{1,2}-[A-Za-z]{3}-\d{2,4}$'
-    year_pattern = r'^\d{4}$'
-    text_pattern = r'^[A-Za-z\s\-\.]+$'
-    numeric_pattern = r'^\d+\.?\d*$'
-    status_pattern = r'^(done|completed|pending|in progress|ongoing|on-going|cancelled|on hold)$'
+    # Define patterns for different data categories
+    patterns = {
+        'PLAID/ID': r'^[A-Z0-9\-_]+$',
+        'Date': r'^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$|^\d{4}[/-]\d{1,2}[/-]\d{1,2}$|^\d{1,2}-[A-Za-z]{3}-\d{2,4}$|^\d{4}-\d{2}-\d{2}$',
+        'Year': r'^\d{4}$',
+        'Text/Name': r'^[A-Za-z\s\-\.]+$',
+        'Numeric': r'^\d+\.?\d*$',
+        'Status': r'^(done|completed|pending|in progress|ongoing|on-going|cancelled|on hold|active|inactive|new|open|closed)$',
+        'Project Type': r'^(OLT|MSAG|FTTH|FTTX|GPON|NGN|RAN|MW|SDH|DWDM)$',
+        'Equipment Type': r'^(OLT|MSAG|MDU|SFU|HGU|ONU|ONT|Switch|Router|Gateway)$',
+        'Cluster/Area': r'^[A-Z]{2,4}-?\d*$|^[A-Za-z]+\s+[0-9]+$',
+        'Province/Region': r'^[A-Z][a-z]+(\s+[A-Z][a-z]+)*$',
+        'Site Name': r'^[A-Za-z\s\-\.]+$',
+        'Build Year': r'^20\d{2}$'
+    }
     
-    # Sample analysis
-    date_matches = sample_str.str.contains(date_pattern, case=False, na=False).sum()
-    year_matches = sample_str.str.contains(year_pattern, case=False, na=False).sum()
-    text_matches = sample_str.str.contains(text_pattern, case=False, na=False).sum()
-    numeric_matches = sample_str.str.contains(numeric_pattern, case=False, na=False).sum()
-    status_matches = sample_str.str.contains(status_pattern, case=False, na=False).sum()
+    # Count matches for each category
+    category_scores = {}
+    for category, pattern in patterns.items():
+        matches = sample_str.str.contains(pattern, case=False, na=False).sum()
+        if len(sample_str) > 0:
+            score = matches / len(sample_str)
+            if score > 0.5:  # Only consider if more than 50% match
+                category_scores[category] = score
     
-    total_valid = len(sample_str)
+    # If no category matches well, try to detect based on data characteristics
+    if not category_scores:
+        # Check if it's mixed text with numbers
+        has_letters = sample_str.str.contains('[A-Za-z]', na=False).sum() > 0
+        has_numbers = sample_str.str.contains('\d', na=False).sum() > 0
+        
+        if has_letters and has_numbers:
+            return "Mixed (Text+Numbers)", 0.3, sample_str.head(5).tolist()
+        elif has_letters:
+            return "Text", 0.3, sample_str.head(5).tolist()
+        elif has_numbers:
+            return "Numeric", 0.3, sample_str.head(5).tolist()
+        else:
+            return "Unknown", 0, sample_str.head(5).tolist()
     
-    # Determine the predominant type
-    if date_matches / total_valid > 0.7:
-        return True, sample_str.head(5).tolist(), "Dates"
-    elif year_matches / total_valid > 0.7:
-        return True, sample_str.head(5).tolist(), "Years"
-    elif status_matches / total_valid > 0.7:
-        return True, sample_str.head(5).tolist(), "Status values"
-    elif numeric_matches / total_valid > 0.7:
-        return True, sample_str.head(5).tolist(), "Numbers"
-    elif text_matches / total_valid > 0.7:
-        return True, sample_str.head(5).tolist(), "Text"
-    else:
-        return True, sample_str.head(5).tolist(), "Mixed data"
+    # Get the best matching category
+    best_category = max(category_scores, key=category_scores.get)
+    best_score = category_scores[best_category]
+    
+    return best_category, best_score, sample_str.head(5).tolist()
 
-def verify_data_similarity(master_series, olt_series, threshold=0.6):
+def verify_category_match(master_category, master_score, olt_category, olt_score):
     """
-    Verifies if two columns contain similar data patterns
-    Returns: (similarity_score, is_similar, samples)
+    Verifies if two data categories match
+    Returns: (is_match, confidence, description)
     """
-    if len(master_series) == 0 or len(olt_series) == 0:
-        return 0, False, []
+    # Define category groups that are compatible
+    compatible_groups = {
+        'Identifiers': ['PLAID/ID'],
+        'Dates': ['Date'],
+        'Years': ['Year', 'Build Year'],
+        'Text': ['Text/Name', 'Site Name', 'Text'],
+        'Status': ['Status'],
+        'Locations': ['Province/Region', 'Cluster/Area'],
+        'Equipment': ['Equipment Type'],
+        'Project': ['Project Type'],
+        'Numbers': ['Numeric']
+    }
     
-    # Clean and prepare samples
-    master_sample = master_series.dropna().astype(str).str.strip().head(50)
-    olt_sample = olt_series.dropna().astype(str).str.strip().head(50)
+    # Check if categories are in the same group
+    master_group = None
+    olt_group = None
     
-    master_sample = master_sample[master_sample != '']
-    master_sample = master_sample[master_sample != 'nan']
-    olt_sample = olt_sample[olt_sample != '']
-    olt_sample = olt_sample[olt_sample != 'nan']
+    for group, categories in compatible_groups.items():
+        if master_category in categories:
+            master_group = group
+        if olt_category in categories:
+            olt_group = group
     
-    if len(master_sample) == 0 or len(olt_sample) == 0:
-        return 0, False, []
+    # If both categories are in the same group, they're compatible
+    if master_group and olt_group and master_group == olt_group:
+        # Calculate confidence based on scores
+        avg_score = (master_score + olt_score) / 2
+        if avg_score >= 0.8:
+            return True, "High", f"Both are {master_category} ({avg_score:.0%} confidence)"
+        elif avg_score >= 0.6:
+            return True, "Medium", f"Both are {master_category} ({avg_score:.0%} confidence)"
+        else:
+            return True, "Low", f"Both are {master_category} but with low confidence ({avg_score:.0%})"
     
-    # Check for common patterns
-    common_words_master = set(' '.join(master_sample).lower().split())
-    common_words_olt = set(' '.join(olt_sample).lower().split())
+    # Special case: Years and Dates are often compatible
+    if (master_category in ['Year', 'Build Year'] and olt_category == 'Date') or \
+       (master_category == 'Date' and olt_category in ['Year', 'Build Year']):
+        avg_score = (master_score + olt_score) / 2
+        return True, "Medium", f"Years and Dates are compatible ({avg_score:.0%} confidence)"
     
-    # Calculate similarity based on common words
-    if len(common_words_master) > 0 and len(common_words_olt) > 0:
-        intersection = len(common_words_master.intersection(common_words_olt))
-        union = len(common_words_master.union(common_words_olt))
-        word_similarity = intersection / union if union > 0 else 0
-    else:
-        word_similarity = 0
+    # Check if categories are semantically similar
+    semantic_pairs = [
+        ('Text/Name', 'Site Name'),
+        ('Text/Name', 'Text'),
+        ('Province/Region', 'Text/Name'),
+        ('Cluster/Area', 'Text/Name'),
+        ('Equipment Type', 'Text/Name'),
+        ('Project Type', 'Text/Name')
+    ]
     
-    # Check for value overlap (exact matches)
-    common_values = set(master_sample).intersection(set(olt_sample))
-    overlap_ratio = len(common_values) / max(len(set(master_sample)), len(set(olt_sample))) if len(set(master_sample)) > 0 and len(set(olt_sample)) > 0 else 0
+    if (master_category, olt_category) in semantic_pairs or (olt_category, master_category) in semantic_pairs:
+        avg_score = (master_score + olt_score) / 2
+        return True, "Low", f"Semantically similar categories ({avg_score:.0%} confidence)"
     
-    # Combined similarity score
-    similarity_score = max(word_similarity, overlap_ratio * 0.8)
-    is_similar = similarity_score >= threshold
-    
-    # Get sample common values
-    sample_common = list(common_values)[:5] if common_values else []
-    
-    return similarity_score, is_similar, sample_common
+    # If categories are completely different
+    return False, "None", f"Category mismatch: {master_category} ↔ {olt_category}"
 
 # -----------------------------
-# 📊 HEADER MAPPING WITH DATA VALIDATION
+# 📊 HEADER MAPPING WITH DATA CATEGORY VERIFICATION
 # -----------------------------
 
 def get_header_mapping():
@@ -461,23 +494,23 @@ if master_file and olt_file:
     olt_df.columns = olt_df_cleaned.columns
 
     # -----------------------------
-    # 📊 Header Mapping with User Verification
+    # 📊 Header Mapping with Category Verification
     # -----------------------------
-    st.subheader("🔍 Header Mapping Verification")
-    st.info("Please review the column mappings between your Master Tracker and OLT Tracker files. Verify that the correct columns are matched before proceeding.")
+    st.subheader("🔍 Header Mapping with Category Verification")
+    st.info("This tool verifies column mappings by comparing the **type/category** of data in each column, not the specific values.")
 
     # Get mapping configuration
     header_mapping = get_header_mapping()
     
     # Create interactive mapping verification
-    st.write("### 📋 Verify Column Mappings")
+    st.write("### 📋 Category-Based Column Mapping Verification")
     
     # Initialize session state for mapping verification
     if 'mapping_confirmed' not in st.session_state:
         st.session_state.mapping_confirmed = False
         st.session_state.manual_mappings = {}
     
-    # Display current mappings with verification options
+    # Display current mappings with category verification
     mapping_verified = True
     mapping_df_data = []
     
@@ -509,22 +542,43 @@ if master_file and olt_file:
             if manual_olt:
                 olt_col = manual_olt
         
-        # Get data samples for verification
-        master_sample = ""
-        olt_sample = ""
-        data_match_status = "⚠️ Not Verified"
+        # Get data category verification
+        master_category = "N/A"
+        master_confidence = 0
+        olt_category = "N/A"
+        olt_confidence = 0
+        category_match = "❌ Not Found"
+        match_confidence = "None"
+        match_description = ""
+        master_samples = []
+        olt_samples = []
+        
+        if master_col:
+            master_category, master_confidence, master_samples = detect_data_category(master_df[master_col])
+        
+        if olt_col:
+            olt_category, olt_confidence, olt_samples = detect_data_category(olt_df[olt_col])
         
         if master_col and olt_col:
-            master_series = master_df[master_col]
-            olt_series = olt_df[olt_col]
+            is_match, match_confidence, match_description = verify_category_match(
+                master_category, master_confidence,
+                olt_category, olt_confidence
+            )
             
-            # Get samples
-            master_sample = ', '.join(master_series.dropna().astype(str).head(3).tolist()) if len(master_series) > 0 else ""
-            olt_sample = ', '.join(olt_series.dropna().astype(str).head(3).tolist()) if len(olt_series) > 0 else ""
-            
-            # Verify data similarity
-            similarity_score, is_similar, common_values = verify_data_similarity(master_series, olt_series)
-            data_match_status = f"✅ Similar ({similarity_score:.1%})" if is_similar else f"⚠️ Low similarity ({similarity_score:.1%})"
+            if is_match:
+                category_match = f"✅ {match_confidence}"
+            else:
+                category_match = f"⚠️ {match_confidence}"
+                mapping_verified = False
+        elif master_col:
+            category_match = "⚠️ Master Only"
+            mapping_verified = False
+        elif olt_col:
+            category_match = "⚠️ OLT Only"
+            mapping_verified = False
+        else:
+            category_match = "❌ Both Missing"
+            mapping_verified = False
         
         mapping_df_data.append({
             'Field': field,
@@ -532,37 +586,43 @@ if master_file and olt_file:
             'Required': '✅' if mapping.get('required', False) else '',
             'Master Column': master_col or '❌ NOT FOUND',
             'OLT Column': olt_col or '❌ NOT FOUND',
-            'Data Match': data_match_status,
-            'Master Sample': master_sample[:50],
-            'OLT Sample': olt_sample[:50]
+            'Master Category': f"{master_category} ({master_confidence:.0%})" if master_col else 'N/A',
+            'OLT Category': f"{olt_category} ({olt_confidence:.0%})" if olt_col else 'N/A',
+            'Category Match': category_match,
+            'Match Details': match_description if master_col and olt_col else '',
+            'Master Sample': ', '.join(master_samples[:3]) if master_samples else '',
+            'OLT Sample': ', '.join(olt_samples[:3]) if olt_samples else ''
         })
-        
-        if not master_col or not olt_col:
-            mapping_verified = False
     
     # Display mapping table
     mapping_df = pd.DataFrame(mapping_df_data)
     
     # Color coding function
     def color_mapping_status(val):
-        if '✅' in str(val):
+        if '✅' in str(val) and 'High' in str(val):
             return 'background-color: #90EE90'
+        elif '✅' in str(val) and 'Medium' in str(val):
+            return 'background-color: #98FB98'
+        elif '✅' in str(val) and 'Low' in str(val):
+            return 'background-color: #FFFACD'
         elif '⚠️' in str(val):
             return 'background-color: #FFD700'
         elif '❌' in str(val):
             return 'background-color: #FF6B6B'
         return ''
     
-    styled_mapping = mapping_df.style.map(color_mapping_status, subset=['Data Match', 'Master Column', 'OLT Column'])
+    styled_mapping = mapping_df.style.map(color_mapping_status, subset=['Category Match'])
     st.dataframe(styled_mapping, use_container_width=True)
     
-    # Show warnings for missing mappings
-    missing_mappings = mapping_df[mapping_df['Master Column'].str.contains('NOT FOUND', na=False) | 
-                                   mapping_df['OLT Column'].str.contains('NOT FOUND', na=False)]
+    # Show warnings for missing or mismatched mappings
+    issues = mapping_df[
+        (mapping_df['Category Match'].str.contains('⚠️|❌', na=False)) |
+        (mapping_df['Master Column'].str.contains('NOT FOUND', na=False)) |
+        (mapping_df['OLT Column'].str.contains('NOT FOUND', na=False))
+    ]
     
-    if len(missing_mappings) > 0:
-        st.warning(f"⚠️ Found {len(missing_mappings)} fields with missing column mappings. Please fix these before proceeding.")
-        st.dataframe(missing_mappings[['Field', 'Description', 'Master Column', 'OLT Column']], use_container_width=True)
+    if len(issues) > 0:
+        st.warning(f"⚠️ Found {len(issues)} fields with mapping issues. Please review them above.")
     
     # Manual mapping override section
     with st.expander("🛠️ Manual Mapping Override (Advanced)"):
@@ -619,9 +679,9 @@ if master_file and olt_file:
     st.write("### ✅ Confirm Mappings")
     
     if mapping_verified:
-        st.success("✅ All required columns are mapped correctly!")
+        st.success("✅ All column mappings are verified by data category!")
     else:
-        st.warning("⚠️ Some required columns are missing. Please fix the mappings above.")
+        st.warning("⚠️ Some mappings have issues. Please review and fix them above.")
     
     # User confirmation checkbox
     confirm_mapping = st.checkbox(
@@ -721,20 +781,22 @@ if master_file and olt_file:
                         matched_master_col = clean_m_col
                         formatting_func = mapping.get('format', None)
                         
-                        # Verify data similarity
-                        master_series = master_df[matched_master_col]
-                        olt_series = olt_df[olt_col]
-                        similarity_score, is_similar, common_values = verify_data_similarity(master_series, olt_series)
+                        # Verify data category match
+                        master_category, master_confidence, _ = detect_data_category(master_df[matched_master_col])
+                        olt_category, olt_confidence, _ = detect_data_category(olt_df[olt_col])
+                        is_match, match_conf, match_desc = verify_category_match(
+                            master_category, master_confidence,
+                            olt_category, olt_confidence
+                        )
                         
-                        match_confidence = "High" if similarity_score > 0.8 else "Medium" if similarity_score > 0.6 else "Low"
-                        
-                        if is_similar:
-                            verification_note = f"✅ Data verified (Score: {similarity_score:.2%})"
-                            if mapping.get('required', False) and not is_similar:
-                                mapping_issues.append(f"⚠️ Required field '{field}' has low data similarity ({similarity_score:.2%})")
+                        match_confidence = match_conf
+                        if is_match:
+                            verification_note = f"✅ Category: {master_category} ↔ {olt_category} ({match_conf})"
+                            if mapping.get('required', False) and match_conf in ['Low', 'None']:
+                                mapping_issues.append(f"⚠️ Required field '{field}' has low category match confidence ({match_conf})")
                         else:
-                            verification_note = f"⚠️ Data mismatch (Score: {similarity_score:.2%}) - Check values"
-                            mapping_issues.append(f"⚠️ Field '{field}' data doesn't match between files (Score: {similarity_score:.2%})")
+                            verification_note = f"⚠️ Category mismatch: {master_category} ↔ {olt_category}"
+                            mapping_issues.append(f"⚠️ Field '{field}' category mismatch between files")
                         
                         break
                 if matched_master_col:
@@ -748,7 +810,7 @@ if master_file and olt_file:
                     })
                 break
         
-        # If not in mapping, try to match by column name with data verification
+        # If not in mapping, try to match by column name with category verification
         if not matched_master_col:
             best_match = None
             best_score = 0
@@ -762,33 +824,38 @@ if master_file and olt_file:
                 
                 # Check partial match
                 if clean_olt_name in clean_string_normalization(clean_m_col) or clean_string_normalization(clean_m_col) in clean_olt_name:
-                    # Verify data similarity for this potential match
-                    master_series = master_df[clean_m_col]
-                    olt_series = olt_df[olt_col]
-                    similarity_score, is_similar, common_values = verify_data_similarity(master_series, olt_series)
+                    # Verify data category for this potential match
+                    master_category, master_confidence, _ = detect_data_category(master_df[clean_m_col])
+                    olt_category, olt_confidence, _ = detect_data_category(olt_df[olt_col])
+                    is_match, match_conf, _ = verify_category_match(
+                        master_category, master_confidence,
+                        olt_category, olt_confidence
+                    )
                     
-                    if similarity_score > best_score:
-                        best_score = similarity_score
-                        best_match = clean_m_col
+                    if is_match:
+                        score = (master_confidence + olt_confidence) / 2
+                        if score > best_score:
+                            best_score = score
+                            best_match = clean_m_col
             
             if best_match and best_score > 0.4:
                 matched_master_col = best_match
                 match_confidence = "High" if best_score > 0.8 else "Medium" if best_score > 0.6 else "Low"
-                verification_note = f"🔀 Auto-matched (Score: {best_score:.2%})"
+                verification_note = f"🔀 Auto-matched by category (Score: {best_score:.0%})"
                 mapped_columns_log.append({
                     'olt_col': olt_col,
                     'master_col': matched_master_col,
                     'field': 'Auto-matched',
                     'confidence': match_confidence,
                     'verification': verification_note,
-                    'description': 'Auto-detected by name & data similarity'
+                    'description': 'Auto-detected by name & data category'
                 })
         
         # Handle the PLAID column specially
         if clean_olt_name == clean_string_normalization('PLAID'):
             matched_master_col = master_plaid_col_clean
             match_confidence = "High"
-            verification_note = "🔑 Key identifier verified"
+            verification_note = "🔑 Key identifier verified by category"
             mapped_columns_log.append({
                 'olt_col': olt_col,
                 'master_col': matched_master_col,
@@ -798,7 +865,7 @@ if master_file and olt_file:
                 'description': 'Primary Key Identifier'
             })
         
-        # Apply the mapping to ALL records (not just missing ones)
+        # Apply the mapping to ALL records
         if matched_master_col:
             # Apply any formatting function if defined
             if formatting_func:
@@ -819,7 +886,7 @@ if master_file and olt_file:
     
     # Display mapping warnings
     if mapping_issues:
-        st.warning("⚠️ Data Verification Issues Found")
+        st.warning("⚠️ Data Category Verification Issues Found")
         for issue in mapping_issues:
             st.write(f"- {issue}")
     
