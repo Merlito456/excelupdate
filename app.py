@@ -284,12 +284,27 @@ def manual_header_mapping_ui(data_df, master_df):
     col1, col2 = st.columns(2)
     with col1:
         st.write("### 📋 Data File Columns (Source)")
-        st.write(", ".join(data_df.columns.tolist()))
-        st.caption(f"Total: {len(data_df.columns)} columns")
+        data_cols = data_df.columns.tolist()
+        st.write(", ".join(data_cols))
+        st.caption(f"Total: {len(data_cols)} columns")
+        
+        # Show sample data
+        with st.expander("📊 Data File Sample"):
+            st.dataframe(data_df.head(5), use_container_width=True)
+    
     with col2:
         st.write("### 📋 Master File Columns (Target)")
-        st.write(", ".join(master_df.columns.tolist()))
-        st.caption(f"Total: {len(master_df.columns)} columns")
+        master_cols = master_df.columns.tolist()
+        if master_cols:
+            st.write(", ".join(master_cols))
+            st.caption(f"Total: {len(master_cols)} columns")
+            
+            # Show sample data
+            with st.expander("📊 Master File Sample"):
+                st.dataframe(master_df.head(5), use_container_width=True)
+        else:
+            st.error("❌ No columns detected in Master File! Please check the header row index.")
+            st.write("**Try adjusting the 'Master Header Row Index' in the sidebar.**")
     
     st.markdown("---")
     
@@ -300,6 +315,10 @@ def manual_header_mapping_ui(data_df, master_df):
     # Get all data columns and master columns
     data_columns = data_df.columns.tolist()
     master_columns = master_df.columns.tolist()
+    
+    if not master_columns:
+        st.warning("⚠️ No Master columns detected. Please adjust the 'Master Header Row Index' in the sidebar.")
+        return st.session_state.manual_mapping
     
     # Get currently mapped columns
     current_mapped = list(st.session_state.manual_mapping.keys())
@@ -443,6 +462,14 @@ def auto_mapping_ui(data_df, master_df):
     st.subheader("🤖 Auto Mapping (Name-Based)")
     st.info("Automatically map Data File columns to Master File columns based on name similarity. Review and confirm the suggested mappings.")
     
+    # Get columns
+    data_columns = data_df.columns.tolist()
+    master_columns = master_df.columns.tolist()
+    
+    if not master_columns:
+        st.warning("⚠️ No Master columns detected. Please adjust the 'Master Header Row Index' in the sidebar.")
+        return {}
+    
     # Initialize session state for auto mapping
     if 'auto_mapping' not in st.session_state:
         st.session_state.auto_mapping = {}
@@ -450,9 +477,6 @@ def auto_mapping_ui(data_df, master_df):
     # Find potential matches based on name similarity
     st.write("### 📋 Suggested Mappings")
     st.caption("These are suggested mappings based on column name similarity. Review each suggestion and select the correct mapping.")
-    
-    data_columns = data_df.columns.tolist()
-    master_columns = master_df.columns.tolist()
     
     # For each data column, find the best matching master column
     suggestions = []
@@ -672,7 +696,7 @@ if master_file and data_file:
     master_header_idx = st.sidebar.number_input("Master Header Row Index (1-based)", min_value=1, value=auto_master_idx + 1) - 1
     data_header_idx = st.sidebar.number_input("Data Header Row Index (1-based)", min_value=1, value=auto_data_idx + 1) - 1
 
-    # Parse dataframes
+    # Parse dataframes with the selected header row
     master_df = master_xls.parse(selected_master_sheet, header=master_header_idx)
     data_df = data_xls.parse(selected_data_sheet, header=data_header_idx)
 
@@ -691,17 +715,31 @@ if master_file and data_file:
     # 📊 FILE INFORMATION
     # -----------------------------
     st.subheader("📊 File Information")
+    
+    # Show raw headers before cleaning for debugging
     col1, col2 = st.columns(2)
     with col1:
         st.write(f"**Master File:** {master_file.name}")
         st.write(f"**Sheet:** {selected_master_sheet}")
         st.write(f"**Rows:** {len(master_df)}")
         st.write(f"**Columns:** {len(master_df.columns)}")
+        
+        # Show actual headers
+        st.write("**Master Headers:**")
+        if len(master_df.columns) > 0:
+            st.write(", ".join(master_df.columns.tolist()))
+        else:
+            st.warning("⚠️ No headers detected! Try adjusting the 'Master Header Row Index'.")
+    
     with col2:
         st.write(f"**Data File:** {data_file.name}")
         st.write(f"**Sheet:** {selected_data_sheet}")
         st.write(f"**Rows:** {len(data_df)}")
         st.write(f"**Columns:** {len(data_df.columns)}")
+        
+        # Show actual headers
+        st.write("**Data Headers:**")
+        st.write(", ".join(data_df.columns.tolist()))
 
     # -----------------------------
     # 📊 COLUMN MAPPING
@@ -720,7 +758,7 @@ if master_file and data_file:
         # Format the data
         formatted_df = format_data_for_master(data_df, master_df, column_mapping)
         
-        if formatted_df is not None:
+        if formatted_df is not None and len(formatted_df.columns) > 0:
             # Show preview
             st.write("### 📊 Formatted Data Preview")
             st.write(f"**Total rows:** {len(formatted_df)}")
@@ -851,6 +889,10 @@ if master_file and data_file:
                         })
                 
                 st.dataframe(pd.DataFrame(mapping_summary), use_container_width=True)
+        else:
+            st.warning("No data to format. Please check your mappings and try again.")
+    else:
+        st.info("Please map columns from the Data File to the Master File.")
 
 else:
     st.info("Please upload both files to proceed.")
