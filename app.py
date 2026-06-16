@@ -542,15 +542,15 @@ def header_inspection_ui(df, df_name, key_prefix):
     return st.session_state[rename_key]
 
 # -----------------------------
-# 📋 COPY DATA INTERFACE
+# 📋 COPY DATA INTERFACE - UPDATED: ONLY VALUES, NO DUPLICATION
 # -----------------------------
 
 def copy_data_interface(mapped_data, column_mapping):
     """
-    Creates an interface for copying data column by column
+    Creates an interface for copying data column by column - Shows only values, no duplication
     """
     st.subheader("📋 Copy Data - Ready for Manual Paste")
-    st.info("Select a column below to view and copy its data. Each column is formatted with headers for easy pasting into your OLT file.")
+    st.info("Select a column below to view and copy its data. Each value is on a new line for easy pasting.")
     
     # Let user select which column to copy
     available_columns = list(mapped_data.columns)
@@ -565,9 +565,6 @@ def copy_data_interface(mapped_data, column_mapping):
     if not populated_columns:
         st.warning("No populated columns found to copy.")
         return
-    
-    # Group columns by type
-    st.write("### Select Column to Copy")
     
     # Create a selectbox with all populated columns
     selected_col = st.selectbox(
@@ -598,63 +595,43 @@ def copy_data_interface(mapped_data, column_mapping):
         with col4:
             st.metric("Empty", max(0, empty_count))
         
-        # Create a copyable text format
+        # Create a copyable text format - ONLY VALUES, NO DUPLICATION
         st.write("### 📋 Copy Ready Format")
-        st.info("Copy the text below and paste it into your OLT file. Each value is on a new line with a row number.")
+        st.info("Copy the text below and paste it into your OLT file. Each value is on a new line.")
         
-        # Format the data for copying - option 1: Simple list
+        # Format the data - clean values only
         format_type = st.radio(
             "Select format:",
-            ["Simple List (one per line)", "CSV Format (comma separated)", "Tab Separated"],
+            ["Simple List (one per line)", "CSV Format (comma separated)"],
             horizontal=True
         )
         
         copy_text = ""
-        header_text = ""
-        
-        # Get the PLAID for reference if available
-        plaid_col = None
-        for col in mapped_data.columns:
-            if 'PLAID' in col.upper() or 'plaid' in col.lower():
-                plaid_col = col
-                break
+        header_text = f"Column: {selected_col}\n"
+        header_text += "=" * 50 + "\n"
+        copy_text = header_text
         
         if format_type == "Simple List (one per line)":
-            # Add header
-            header_text = f"Column: {selected_col}\n"
-            header_text += "=" * 50 + "\n"
-            if plaid_col:
-                header_text += f"PLAID\t{selected_col}\n"
-                header_text += "-" * 50 + "\n"
-            copy_text = header_text
-            
-            # Add each value
+            # Add each value - clean, no duplication
             for idx, value in enumerate(data_series):
-                row_num = idx + 1
                 if pd.isna(value) or str(value).strip() == '' or str(value).strip() == 'nan':
-                    value_str = "[EMPTY]"
+                    value_str = ""
                 else:
                     value_str = str(value).strip()
                 
-                if plaid_col:
-                    plaid_val = mapped_data[plaid_col].iloc[idx]
-                    if pd.isna(plaid_val) or str(plaid_val).strip() == '':
-                        plaid_val = "N/A"
-                    copy_text += f"{plaid_val}\t{value_str}\n"
-                else:
-                    copy_text += f"{row_num:4d}. {value_str}\n"
+                # Simple format: just the value
+                copy_text += f"{value_str}\n"
+            
+            # Add a note at the end
+            copy_text += "\n" + "=" * 50 + "\n"
+            copy_text += f"Total: {non_null} populated values out of {total_rows} rows"
             
             st.code(copy_text, language="text")
             
-        elif format_type == "CSV Format (comma separated)":
-            # Create CSV format with header
-            header = f"Row,{selected_col}"
-            if plaid_col:
-                header = f"Row,PLAID,{selected_col}"
-            
+        else:  # CSV Format
+            # Create CSV with just the values
             rows = []
             for idx, value in enumerate(data_series):
-                row_num = idx + 1
                 if pd.isna(value) or str(value).strip() == '' or str(value).strip() == 'nan':
                     value_str = ""
                 else:
@@ -662,58 +639,30 @@ def copy_data_interface(mapped_data, column_mapping):
                     # Escape commas if needed
                     if ',' in value_str:
                         value_str = f'"{value_str}"'
-                
-                if plaid_col:
-                    plaid_val = mapped_data[plaid_col].iloc[idx]
-                    if pd.isna(plaid_val) or str(plaid_val).strip() == '':
-                        plaid_val = ""
-                    else:
-                        plaid_val = str(plaid_val).strip()
-                    rows.append(f"{row_num},{plaid_val},{value_str}")
-                else:
-                    rows.append(f"{row_num},{value_str}")
+                rows.append(value_str)
             
-            copy_text = header + "\n" + "\n".join(rows)
+            copy_text = selected_col + "\n" + "\n".join(rows)
             st.code(copy_text, language="csv")
-            
-        else:  # Tab Separated
-            header = f"Row\t{selected_col}"
-            if plaid_col:
-                header = f"Row\tPLAID\t{selected_col}"
-            
-            rows = []
-            for idx, value in enumerate(data_series):
-                row_num = idx + 1
-                if pd.isna(value) or str(value).strip() == '' or str(value).strip() == 'nan':
-                    value_str = ""
-                else:
-                    value_str = str(value).strip()
-                    # Remove tabs if present
-                    value_str = value_str.replace('\t', ' ')
-                
-                if plaid_col:
-                    plaid_val = mapped_data[plaid_col].iloc[idx]
-                    if pd.isna(plaid_val) or str(plaid_val).strip() == '':
-                        plaid_val = ""
-                    else:
-                        plaid_val = str(plaid_val).strip()
-                    rows.append(f"{row_num}\t{plaid_val}\t{value_str}")
-                else:
-                    rows.append(f"{row_num}\t{value_str}")
-            
-            copy_text = header + "\n" + "\n".join(rows)
-            st.code(copy_text, language="text")
         
-        # Add copy button using JavaScript
+        # Add copy instructions
         st.write("### 📌 Copy to Clipboard")
         st.info("Select all text above (Ctrl+A or Cmd+A), then copy (Ctrl+C or Cmd+C)")
         
-        # Add download option for the column data
+        # Add download option for the column data - CLEAN VERSION (values only)
         st.write("### 💾 Download as Text File")
+        
+        # Create a clean download version (just values, no header)
+        download_text = ""
+        for idx, value in enumerate(data_series):
+            if pd.isna(value) or str(value).strip() == '' or str(value).strip() == 'nan':
+                download_text += "\n"
+            else:
+                download_text += f"{str(value).strip()}\n"
+        
         if st.button(f"Download {selected_col} data as .txt"):
             st.download_button(
                 label="Click to download",
-                data=copy_text,
+                data=download_text,
                 file_name=f"{selected_col}_data.txt",
                 mime="text/plain"
             )
@@ -724,8 +673,6 @@ def copy_data_interface(mapped_data, column_mapping):
                 'Row': range(1, min(len(data_series), 100) + 1),
                 selected_col: data_series.head(100).tolist()
             })
-            if plaid_col:
-                preview_df['PLAID'] = mapped_data[plaid_col].head(100).tolist()
             st.dataframe(preview_df, use_container_width=True)
 
 # -----------------------------
@@ -1024,7 +971,6 @@ if master_file and olt_file:
     st.dataframe(pd.DataFrame(mapping_display), use_container_width=True)
     
     # Create mapped data for copying
-    # Start with Master data, but format for OLT
     mapped_data = pd.DataFrame()
     
     # Get PLAID column for matching
@@ -1095,7 +1041,7 @@ if master_file and olt_file:
     st.info(f"✅ Mapped {len(mapped_columns)} columns ready for copying")
 
     # -----------------------------
-    # 📋 COPY DATA INTERFACE
+    # 📋 COPY DATA INTERFACE - UPDATED
     # -----------------------------
     st.markdown("---")
     copy_data_interface(mapped_data, enrichment_mapping)
