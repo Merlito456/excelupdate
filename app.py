@@ -269,7 +269,7 @@ def detect_data_category(series):
     return best_category, best_score, sample_str.head(5).tolist()
 
 # -----------------------------
-# 📋 MANUAL HEADER MAPPING UI - FIXED
+# 📋 MANUAL HEADER MAPPING UI
 # -----------------------------
 
 def manual_header_mapping_ui(data_df, master_df):
@@ -305,25 +305,25 @@ def manual_header_mapping_ui(data_df, master_df):
     # Let user select which data columns to map
     st.write("### 📋 Select Data Columns to Map")
     
-    # Show all data columns with checkboxes for selection - FIX: Use checkbox instead of multiselect with default
-    # This avoids the default parameter issue
+    # Show all data columns with checkboxes for selection
     selected_data_cols = []
     
     # Create a grid of checkboxes for column selection
     cols_per_row = 4
+    checkbox_cols = st.columns(cols_per_row)
+    
     for i, col in enumerate(data_columns):
-        if i % cols_per_row == 0:
-            cols = st.columns(cols_per_row)
-        
-        # Check if column is already mapped
-        is_mapped = col in current_mapped
-        checked = st.checkbox(
-            col, 
-            value=is_mapped,
-            key=f"select_{col}"
-        )
-        if checked:
-            selected_data_cols.append(col)
+        col_idx = i % cols_per_row
+        with checkbox_cols[col_idx]:
+            # Check if column is already mapped
+            is_mapped = col in current_mapped
+            checked = st.checkbox(
+                col, 
+                value=is_mapped,
+                key=f"select_{col}"
+            )
+            if checked:
+                selected_data_cols.append(col)
     
     if selected_data_cols:
         st.write("### 🔗 Map Each Column")
