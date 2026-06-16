@@ -274,20 +274,22 @@ def detect_data_category(series):
 
 def manual_header_mapping_ui(data_df, master_df):
     """
-    Creates a manual header mapping interface where users can map columns one by one
+    Creates a manual header mapping interface where users map Data File columns to Master File columns
     Returns: dictionary mapping data columns to master columns
     """
     st.subheader("🔗 Manual Header Mapping")
-    st.info("Manually map each column from the Data File to the Master File. This gives you full control over the mapping.")
+    st.info("Map Data File columns to Master File columns. Select which Data File columns you want to map, then choose the corresponding Master File column for each.")
     
     # Show both file headers side by side
     col1, col2 = st.columns(2)
     with col1:
-        st.write("### 📋 Data File Headers")
+        st.write("### 📋 Data File Columns (Source)")
         st.write(", ".join(data_df.columns.tolist()))
+        st.caption(f"Total: {len(data_df.columns)} columns")
     with col2:
-        st.write("### 📋 Master File Headers")
+        st.write("### 📋 Master File Columns (Target)")
         st.write(", ".join(master_df.columns.tolist()))
+        st.caption(f"Total: {len(master_df.columns)} columns")
     
     st.markdown("---")
     
@@ -303,7 +305,8 @@ def manual_header_mapping_ui(data_df, master_df):
     current_mapped = list(st.session_state.manual_mapping.keys())
     
     # Let user select which data columns to map
-    st.write("### 📋 Select Data Columns to Map")
+    st.write("### 📋 Select Data File Columns to Map")
+    st.caption("Check the boxes below to select which columns from the Data File you want to map to the Master File.")
     
     # Show all data columns with checkboxes for selection
     selected_data_cols = []
@@ -326,8 +329,8 @@ def manual_header_mapping_ui(data_df, master_df):
                 selected_data_cols.append(col)
     
     if selected_data_cols:
-        st.write("### 🔗 Map Each Column")
-        st.info("For each selected data column, choose which master column it should map to.")
+        st.write("### 🔗 Map Selected Columns to Master File")
+        st.info("For each selected Data File column, choose which Master File column it should map to.")
         
         # For each selected data column, let user choose which master column it should go to
         mapping_data = []
@@ -336,7 +339,7 @@ def manual_header_mapping_ui(data_df, master_df):
             current_master = st.session_state.manual_mapping.get(data_col, "")
             
             # Show data preview for this column
-            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+            col1, col2, col3, col4, col5 = st.columns([2, 2, 1, 1, 1])
             with col1:
                 st.write(f"**{data_col}**")
                 # Show sample values
@@ -347,9 +350,9 @@ def manual_header_mapping_ui(data_df, master_df):
                     st.write("(Empty column)")
             
             with col2:
-                # Select master column
+                # Select master column (TARGET)
                 selected_master = st.selectbox(
-                    f"Map to:",
+                    f"Map to Master column:",
                     options=['-- Skip --', '-- New Column --'] + master_columns,
                     index=0 if current_master == "" else (1 if current_master == "new" else master_columns.index(current_master) + 2),
                     key=f"manual_map_{data_col}"
@@ -383,6 +386,11 @@ def manual_header_mapping_ui(data_df, master_df):
                 else:
                     st.write("⏭️ Skipped")
             
+            with col5:
+                # Show if already mapped
+                if current_master and current_master != "":
+                    st.info(f"Current: {current_master}")
+            
             mapping_data.append({
                 'Data Column': data_col,
                 'Master Column': selected_master if selected_master != '-- Skip --' else 'Not mapped',
@@ -405,11 +413,15 @@ def manual_header_mapping_ui(data_df, master_df):
         with col1:
             st.metric("Total Selected", len(mapping_data))
         with col2:
-            st.metric("Mapped", mapped_count)
+            st.metric("Mapped to Master", mapped_count)
         with col3:
             st.metric("New Columns", new_count)
         with col4:
             st.metric("Skipped", skipped_count)
+        
+        # Show full mapping dictionary
+        st.write("### 📋 Full Mapping Dictionary")
+        st.json(st.session_state.manual_mapping)
     
     # Button to clear all mappings
     if st.button("🔄 Clear All Manual Mappings"):
@@ -425,10 +437,11 @@ def manual_header_mapping_ui(data_df, master_df):
 def auto_mapping_ui(data_df, master_df):
     """
     Creates an automatic mapping interface based on column name similarity
+    Maps Data File columns to Master File columns
     Returns: dictionary mapping data columns to master columns
     """
     st.subheader("🤖 Auto Mapping (Name-Based)")
-    st.info("Automatically map columns based on name similarity. Review and confirm the mappings.")
+    st.info("Automatically map Data File columns to Master File columns based on name similarity. Review and confirm the suggested mappings.")
     
     # Initialize session state for auto mapping
     if 'auto_mapping' not in st.session_state:
@@ -436,6 +449,7 @@ def auto_mapping_ui(data_df, master_df):
     
     # Find potential matches based on name similarity
     st.write("### 📋 Suggested Mappings")
+    st.caption("These are suggested mappings based on column name similarity. Review each suggestion and select the correct mapping.")
     
     data_columns = data_df.columns.tolist()
     master_columns = master_df.columns.tolist()
@@ -479,37 +493,65 @@ def auto_mapping_ui(data_df, master_df):
         
         # Only suggest if score is decent
         if best_match and best_score >= 0.5:
+            # Get current mapping if exists
+            current_master = st.session_state.auto_mapping.get(data_col, "")
+            
+            # Determine default index
+            if current_master and current_master in master_columns:
+                default_idx = master_columns.index(current_master) + 2
+            else:
+                default_idx = master_columns.index(best_match) + 2 if best_match in master_columns else 0
+            
             suggestions.append({
                 'Data Column': data_col,
                 'Suggested Master': best_match,
                 'Confidence': f"{best_score:.0%}",
+                'Current': current_master,
                 'Action': st.selectbox(
                     f"Map '{data_col}' to:",
                     options=['-- Skip --', '-- New Column --'] + master_columns,
-                    index=master_columns.index(best_match) + 2 if best_match in master_columns else 0,
+                    index=default_idx if default_idx > 0 else 0,
                     key=f"auto_map_{data_col}"
                 )
             })
     
     # Show suggestions
     if suggestions:
-        suggestion_df = pd.DataFrame(suggestions)
+        # Create a display DataFrame
+        suggestion_display = []
+        for s in suggestions:
+            suggestion_display.append({
+                'Data Column': s['Data Column'],
+                'Suggested Master': s['Suggested Master'],
+                'Confidence': s['Confidence'],
+                'Current Mapping': s['Current'] if s['Current'] else 'None',
+                'Selected': s['Action'] if s['Action'] != '-- Skip --' else 'Skipped'
+            })
+        
+        suggestion_df = pd.DataFrame(suggestion_display)
         st.dataframe(suggestion_df, use_container_width=True)
         
         # Apply auto mappings
-        if st.button("✅ Apply Auto Mappings"):
-            for suggestion in suggestions:
-                action = suggestion['Action']
-                data_col = suggestion['Data Column']
-                if action == '-- Skip --':
-                    if data_col in st.session_state.auto_mapping:
-                        del st.session_state.auto_mapping[data_col]
-                elif action == '-- New Column --':
-                    st.session_state.auto_mapping[data_col] = "new"
-                else:
-                    st.session_state.auto_mapping[data_col] = action
-            st.success("✅ Auto mappings applied! Review and confirm below.")
-            st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Apply Auto Mappings"):
+                for suggestion in suggestions:
+                    action = suggestion['Action']
+                    data_col = suggestion['Data Column']
+                    if action == '-- Skip --':
+                        if data_col in st.session_state.auto_mapping:
+                            del st.session_state.auto_mapping[data_col]
+                    elif action == '-- New Column --':
+                        st.session_state.auto_mapping[data_col] = "new"
+                    else:
+                        st.session_state.auto_mapping[data_col] = action
+                st.success("✅ Auto mappings applied! Review and confirm below.")
+                st.rerun()
+        
+        with col2:
+            if st.button("🔄 Clear Auto Mappings"):
+                st.session_state.auto_mapping = {}
+                st.rerun()
     else:
         st.warning("No good matches found. Try manual mapping.")
     
@@ -687,6 +729,7 @@ if master_file and data_file:
             
             # ---------- COPY-PASTE SECTION ----------
             st.write("### 📋 Copy-Paste Ready Data")
+            st.info("Select a column below to view and copy the formatted data.")
             
             # Let user select which column to view
             available_cols = formatted_df.columns.tolist()
@@ -794,14 +837,14 @@ if master_file and data_file:
                     if map_to == "new":
                         mapping_summary.append({
                             'Data Column': data_col,
-                            'Maps To': 'New Column',
+                            'Maps To Master Column': 'New Column (will be added)',
                             'Data Type': detect_column_type(data_df[data_col]),
                             'Rows': len(data_df)
                         })
                     else:
                         mapping_summary.append({
                             'Data Column': data_col,
-                            'Maps To': map_to,
+                            'Maps To Master Column': map_to,
                             'Data Type': detect_column_type(data_df[data_col]),
                             'Master Type': detect_column_type(master_df[map_to]) if map_to in master_df.columns else 'N/A',
                             'Rows': len(data_df)
