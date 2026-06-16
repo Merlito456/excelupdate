@@ -456,6 +456,10 @@ if master_file and olt_file:
     master_plaid_col_clean = list(master_df_cleaned.columns)[orig_master_cols.index(chosen_master_plaid_raw)]
     olt_plaid_col_clean = list(olt_df_cleaned.columns)[orig_olt_cols.index(chosen_olt_plaid_raw)]
 
+    # Apply cleaned column names to dataframes
+    master_df.columns = master_df_cleaned.columns
+    olt_df.columns = olt_df_cleaned.columns
+
     # -----------------------------
     # 📊 Header Mapping with Data Validation
     # -----------------------------
@@ -471,7 +475,7 @@ if master_file and olt_file:
         master_header = mapping['master_col']
         olt_header = mapping['olt_col']
         
-        # Find actual columns
+        # Find actual columns in cleaned dataframes
         master_col = None
         olt_col = None
         
@@ -499,7 +503,7 @@ if master_file and olt_file:
             'Common Values': ''
         }
         
-        if master_col and olt_col:
+        if master_col is not None and olt_col is not None:
             # Validate data in both columns
             master_series = master_df[master_col]
             olt_series = olt_df[olt_col]
@@ -517,17 +521,17 @@ if master_file and olt_file:
             result['Master Sample'] = ', '.join(master_sample[:3]) if master_sample else ''
             result['OLT Sample'] = ', '.join(olt_sample[:3]) if olt_sample else ''
             result['Common Values'] = ', '.join(common_values[:3]) if common_values else ''
-        elif master_col:
+        elif master_col is not None:
             result['Status'] = '⚠️ Master Only'
-        elif olt_col:
+        elif olt_col is not None:
             result['Status'] = '⚠️ OLT Only'
         
         validation_results.append(result)
     
-    # Display validation results - FIXED applymap to map
+    # Display validation results
     validation_df = pd.DataFrame(validation_results)
     
-    # Color coding for status using map instead of applymap
+    # Color coding for status using map
     def color_status(val):
         if '✅' in str(val):
             return 'background-color: #90EE90'
@@ -562,9 +566,6 @@ if master_file and olt_file:
     # 📊 All Entries with Duplicate Highlighting
     # -----------------------------
     st.write(f"📂 **Active Master Sheet:** `{selected_master_sheet}` | **Active OLT Sheet:** `{selected_olt_sheet}`")
-
-    master_df.columns = master_df_cleaned.columns
-    olt_df.columns = olt_df_cleaned.columns
 
     master_df[master_plaid_col_clean] = master_df[master_plaid_col_clean].astype(str).str.strip()
     olt_df[olt_plaid_col_clean] = olt_df[olt_plaid_col_clean].astype(str).str.strip()
@@ -611,13 +612,13 @@ if master_file and olt_file:
     st.subheader("🔄 Automated Column Mapping with Data Verification")
     
     # Create append DataFrame with OLT columns
-    append_df = pd.DataFrame(columns=orig_olt_cols)
+    append_df = pd.DataFrame(columns=olt_df.columns)  # Use cleaned column names
     mapped_columns_log = []
     mapping_issues = []
     
     # Process each OLT column based on the mapping
-    for c_idx, orig_olt_col in enumerate(orig_olt_cols):
-        clean_olt_name = clean_string_normalization(orig_olt_col)
+    for olt_col in olt_df.columns:
+        clean_olt_name = clean_string_normalization(olt_col)
         
         # Skip empty or track columns
         if clean_olt_name == "" or "solution track" in clean_olt_name or clean_olt_name == "track":
@@ -641,14 +642,13 @@ if master_file and olt_file:
                         
                         # Verify data similarity
                         master_series = master_df[matched_master_col]
-                        olt_series = olt_df[orig_olt_col]
+                        olt_series = olt_df[olt_col]
                         similarity_score, is_similar, common_values = verify_data_similarity(master_series, olt_series)
                         
                         match_confidence = "High" if similarity_score > 0.8 else "Medium" if similarity_score > 0.6 else "Low"
                         
                         if is_similar:
                             verification_note = f"✅ Data verified (Score: {similarity_score:.2%})"
-                            # Check required fields
                             if mapping.get('required', False) and not is_similar:
                                 mapping_issues.append(f"⚠️ Required field '{field}' has low data similarity ({similarity_score:.2%})")
                         else:
@@ -658,7 +658,7 @@ if master_file and olt_file:
                         break
                 if matched_master_col:
                     mapped_columns_log.append({
-                        'olt_col': orig_olt_col,
+                        'olt_col': olt_col,
                         'master_col': matched_master_col,
                         'field': field,
                         'confidence': match_confidence,
@@ -683,7 +683,7 @@ if master_file and olt_file:
                 if clean_olt_name in clean_string_normalization(clean_m_col) or clean_string_normalization(clean_m_col) in clean_olt_name:
                     # Verify data similarity for this potential match
                     master_series = master_df[clean_m_col]
-                    olt_series = olt_df[orig_olt_col]
+                    olt_series = olt_df[olt_col]
                     similarity_score, is_similar, common_values = verify_data_similarity(master_series, olt_series)
                     
                     if similarity_score > best_score:
@@ -695,7 +695,7 @@ if master_file and olt_file:
                 match_confidence = "High" if best_score > 0.8 else "Medium" if best_score > 0.6 else "Low"
                 verification_note = f"🔀 Auto-matched (Score: {best_score:.2%})"
                 mapped_columns_log.append({
-                    'olt_col': orig_olt_col,
+                    'olt_col': olt_col,
                     'master_col': matched_master_col,
                     'field': 'Auto-matched',
                     'confidence': match_confidence,
@@ -709,7 +709,7 @@ if master_file and olt_file:
             match_confidence = "High"
             verification_note = "🔑 Key identifier verified"
             mapped_columns_log.append({
-                'olt_col': orig_olt_col,
+                'olt_col': olt_col,
                 'master_col': matched_master_col,
                 'field': 'PLAID',
                 'confidence': match_confidence,
@@ -722,13 +722,13 @@ if master_file and olt_file:
             # Apply any formatting function if defined
             if formatting_func:
                 raw_values = missing_records[matched_master_col].tolist()
-                append_df[orig_olt_col] = [formatting_func(val) for val in raw_values]
+                append_df[olt_col] = [formatting_func(val) for val in raw_values]
             else:
-                append_df[orig_olt_col] = missing_records[matched_master_col].tolist()
+                append_df[olt_col] = missing_records[matched_master_col].tolist()
         else:
-            append_df[orig_olt_col] = [""] * len(missing_records)
+            append_df[olt_col] = [""] * len(missing_records)
             mapped_columns_log.append({
-                'olt_col': orig_olt_col,
+                'olt_col': olt_col,
                 'master_col': 'No match found',
                 'field': 'Unmapped',
                 'confidence': 'None',
@@ -795,17 +795,45 @@ if master_file and olt_file:
     if len(append_df) > 0:
         if st.button("🚀 Merge and Append into OLT Spreadsheet"):
             try:
+                # Reload the original OLT file to preserve original column names
                 base_olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
                 
-                # Remove any rows with matching PLAID to avoid duplicates
+                # Get the actual column names from the original file
+                original_olt_columns = list(base_olt_df.columns)
+                
+                # Create a mapping from cleaned to original column names
+                clean_to_original = {}
+                for orig_col in original_olt_columns:
+                    clean_col = clean_string_normalization(orig_col)
+                    # Find the matching cleaned column in append_df
+                    for clean_name in append_df.columns:
+                        if clean_string_normalization(clean_name) == clean_string_normalization(orig_col):
+                            clean_to_original[clean_name] = orig_col
+                            break
+                
+                # Rename append_df columns to match original OLT file
+                append_df_renamed = append_df.copy()
+                for clean_name, orig_name in clean_to_original.items():
+                    if clean_name in append_df_renamed.columns:
+                        append_df_renamed.rename(columns={clean_name: orig_name}, inplace=True)
+                
+                # Get the PLAID column in original names
                 base_plaid_col = chosen_olt_plaid_raw
-                append_plaid_col = chosen_olt_plaid_raw
+                append_plaid_col = base_plaid_col  # Use the same column name
+                
+                # Ensure the PLAID column exists in append_df_renamed
+                if append_plaid_col not in append_df_renamed.columns:
+                    # Try to find it by checking cleaned names
+                    for col in append_df_renamed.columns:
+                        if clean_string_normalization(col) == clean_string_normalization('PLAID'):
+                            append_plaid_col = col
+                            break
                 
                 # Filter out rows that already exist in OLT
                 existing_plaids = set(base_olt_df[base_plaid_col].astype(str).str.strip())
-                append_plaid_values = append_df[append_plaid_col].astype(str).str.strip()
+                append_plaid_values = append_df_renamed[append_plaid_col].astype(str).str.strip()
                 new_records_mask = ~append_plaid_values.isin(existing_plaids)
-                new_records = append_df[new_records_mask]
+                new_records = append_df_renamed[new_records_mask]
                 
                 # Also filter out records with empty PLAID
                 new_records = new_records[new_records[append_plaid_col].astype(str).str.strip() != '']
