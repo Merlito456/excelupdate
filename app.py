@@ -352,6 +352,125 @@ def verify_data_similarity_with_patterns(master_series, olt_series, threshold=0.
     return similarity_score, is_similar, details, list(common_values)[:10], pattern_match
 
 # -----------------------------
+# 📊 HEADER INSPECTION AND RENAMING UI
+# -----------------------------
+
+def header_inspection_ui(df, df_name, key_prefix):
+    """
+    Creates an interactive UI for inspecting and renaming column headers
+    Returns: dictionary mapping original to new column names
+    """
+    st.write(f"### 🔍 Inspect and Rename Headers - {df_name}")
+    st.info(f"Total columns: {len(df.columns)}")
+    
+    # Initialize session state for column renaming
+    rename_key = f"{key_prefix}_rename_mapping"
+    if rename_key not in st.session_state:
+        st.session_state[rename_key] = {col: col for col in df.columns}
+    
+    # Allow user to select a column to inspect
+    selected_col = st.selectbox(
+        f"Select a column from {df_name} to inspect:",
+        options=df.columns,
+        key=f"{key_prefix}_select_col"
+    )
+    
+    if selected_col:
+        # Show data preview for selected column
+        st.write(f"#### 📊 Data Preview: {selected_col}")
+        
+        # Get data samples
+        sample_data = df[selected_col].dropna().head(20)
+        sample_values = sample_data.tolist()
+        
+        # Show data statistics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Non-null Count", df[selected_col].count())
+        with col2:
+            st.metric("Unique Values", df[selected_col].nunique())
+        with col3:
+            null_count = df[selected_col].isna().sum()
+            st.metric("Null Count", null_count)
+        with col4:
+            # Detect data category
+            category, confidence, _ = detect_data_category(df[selected_col])
+            st.metric("Data Category", category)
+        
+        # Show sample data in a table
+        st.write("**Sample Values (First 20 non-null):**")
+        if len(sample_values) > 0:
+            sample_df = pd.DataFrame({
+                'Row': range(1, len(sample_values) + 1),
+                'Value': sample_values
+            })
+            st.dataframe(sample_df, use_container_width=True)
+        else:
+            st.warning("No non-null values found in this column")
+        
+        # Show value distribution for repeated values
+        if df[selected_col].nunique() < 50 and df[selected_col].count() > 0:
+            st.write("**Value Distribution (Top 10):**")
+            value_counts = df[selected_col].value_counts().head(10)
+            dist_df = pd.DataFrame({
+                'Value': value_counts.index,
+                'Count': value_counts.values,
+                'Percentage': (value_counts.values / len(df) * 100).round(1)
+            })
+            st.dataframe(dist_df, use_container_width=True)
+        
+        # Allow column renaming
+        st.write("#### ✏️ Rename This Column")
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            new_name = st.text_input(
+                f"New name for '{selected_col}':",
+                value=st.session_state[rename_key].get(selected_col, selected_col),
+                key=f"{key_prefix}_rename_input_{selected_col}"
+            )
+        with col2:
+            if st.button(f"Apply Rename", key=f"{key_prefix}_apply_rename_{selected_col}"):
+                if new_name and new_name != selected_col:
+                    # Check if new name already exists
+                    if new_name in df.columns and new_name != selected_col:
+                        st.warning(f"⚠️ Column '{new_name}' already exists. Please choose a different name.")
+                    else:
+                        # Update the rename mapping
+                        st.session_state[rename_key][selected_col] = new_name
+                        st.success(f"✅ Column renamed to '{new_name}'")
+                        st.rerun()
+                elif new_name == selected_col:
+                    st.info("No change made. New name is the same as original.")
+                else:
+                    st.warning("Please enter a valid column name.")
+    
+    # Show all column mappings with current names
+    st.write("#### 📋 Current Column Name Mapping")
+    
+    mapping_data = []
+    for orig_col in df.columns:
+        new_col = st.session_state[rename_key].get(orig_col, orig_col)
+        status = "✅ Renamed" if new_col != orig_col else "Original"
+        mapping_data.append({
+            'Original Name': orig_col,
+            'Current Name': new_col,
+            'Status': status
+        })
+    
+    mapping_df = pd.DataFrame(mapping_data)
+    st.dataframe(mapping_df, use_container_width=True)
+    
+    # Button to reset all renames
+    if st.button(f"🔄 Reset All Column Names for {df_name}", key=f"{key_prefix}_reset"):
+        st.session_state[rename_key] = {col: col for col in df.columns}
+        st.success("✅ All column names reset to original")
+        st.rerun()
+    
+    # Return the rename mapping
+    return st.session_state[rename_key]
+
+# -----------------------------
 # 📊 HEADER MAPPING WITH COMPREHENSIVE VERIFICATION
 # -----------------------------
 
@@ -622,6 +741,56 @@ if master_file and olt_file:
     olt_df.columns = olt_df_cleaned.columns
 
     # -----------------------------
+    # 📊 HEADER INSPECTION AND RENAMING
+    # -----------------------------
+    st.subheader("🔍 Header Inspection and Renaming")
+    st.info("Inspect the data in each column and rename headers if needed. This helps ensure accurate column mapping.")
+    
+    # Create tabs for Master and OLT header inspection
+    tab1, tab2 = st.tabs(["📋 Master Tracker Headers", "📋 OLT Tracker Headers"])
+    
+    with tab1:
+        master_rename_mapping = header_inspection_ui(master_df, "Master Tracker", "master")
+        # Apply renaming to master_df
+        if master_rename_mapping:
+            new_master_columns = []
+            for col in master_df.columns:
+                new_name = master_rename_mapping.get(col, col)
+                new_master_columns.append(new_name)
+            master_df.columns = new_master_columns
+    
+    with tab2:
+        olt_rename_mapping = header_inspection_ui(olt_df, "OLT Tracker", "olt")
+        # Apply renaming to olt_df
+        if olt_rename_mapping:
+            new_olt_columns = []
+            for col in olt_df.columns:
+                new_name = olt_rename_mapping.get(col, col)
+                new_olt_columns.append(new_name)
+            olt_df.columns = new_olt_columns
+    
+    # Show updated column lists
+    st.write("### 📊 Updated Column Lists")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("**Master Tracker Columns:**")
+        st.write(", ".join(master_df.columns.tolist()))
+    with col2:
+        st.write("**OLT Tracker Columns:**")
+        st.write(", ".join(olt_df.columns.tolist()))
+    
+    # Confirm after inspection
+    st.write("### ✅ Confirm After Header Inspection")
+    confirm_inspection = st.checkbox(
+        "I have inspected and renamed headers as needed. Proceed to mapping verification.",
+        key="confirm_inspection"
+    )
+    
+    if not confirm_inspection:
+        st.info("Please inspect and verify the headers before proceeding.")
+        st.stop()
+
+    # -----------------------------
     # 📊 Header Mapping with Comprehensive Verification
     # -----------------------------
     st.subheader("🔍 Comprehensive Column Mapping Verification")
@@ -649,7 +818,7 @@ if master_file and olt_file:
         master_header = mapping['master_col']
         olt_header = mapping['olt_col']
         
-        # Find actual columns
+        # Find actual columns (using current renamed columns)
         master_col = None
         olt_col = None
         
