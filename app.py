@@ -7,9 +7,9 @@ from datetime import datetime
 import re
 from collections import Counter
 
-st.set_page_config(page_title="Data Merger Tool", layout="wide")
+st.set_page_config(page_title="Data Merger & Copy Tool", layout="wide")
 
-st.title("📊 Data File → Master File Merger Tool")
+st.title("📊 Data File → Master File Tool")
 
 # -----------------------------
 # ✅ Core Helper Functions
@@ -119,6 +119,23 @@ def get_numeric_value(val):
         return float_val, True
     except:
         return pd.NA, False
+
+def get_value_for_copy(val):
+    """
+    Clean a value for copy-paste - handles all data types
+    """
+    if pd.isna(val) or val is None:
+        return ""
+    
+    # Handle float with .0
+    if isinstance(val, float):
+        if val.is_integer():
+            return str(int(val))
+        else:
+            return str(val)
+    
+    # Handle other types
+    return str(val).strip()
 
 # -----------------------------
 # 📊 DATA QUALITY AND POPULATION ANALYSIS
@@ -350,7 +367,97 @@ def header_mapping_ui(data_df, master_df):
     return st.session_state.column_mapping
 
 # -----------------------------
-# 📋 MERGE DATA FUNCTION - FIXED FOR NUMERIC COLUMNS
+# 📋 COPY DATA INTERFACE - NEW
+# -----------------------------
+
+def copy_data_interface(data_df, copy_mapping):
+    """
+    Creates an interface for copy-paste ready data
+    """
+    if not copy_mapping:
+        st.info("Please map columns first to enable copy-paste.")
+        return
+    
+    st.subheader("📋 Copy-Paste Ready Data")
+    st.info("Select a column below. The data will be shown in a clean format ready to copy and paste into Excel.")
+    
+    # Get list of columns to copy
+    copy_columns = list(copy_mapping.keys())
+    
+    # Let user select which column to view
+    selected_copy_col = st.selectbox(
+        "Select column to copy:",
+        options=copy_columns,
+        key="copy_column_select"
+    )
+    
+    if selected_copy_col:
+        # Get the data
+        data_series = data_df[selected_copy_col]
+        master_target = copy_mapping[selected_copy_col]
+        
+        # Show info
+        st.write(f"### 📊 Column: {selected_copy_col}")
+        st.write(f"**Target:** {master_target if master_target != 'new' else 'New Column'}")
+        
+        # Count non-empty values
+        non_empty = 0
+        for val in data_series:
+            if not pd.isna(val) and str(val).strip() != '' and str(val).strip() != 'nan':
+                non_empty += 1
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Rows", len(data_series))
+        with col2:
+            st.metric("Populated", non_empty)
+        with col3:
+            st.metric("Empty", len(data_series) - non_empty)
+        
+        # Create clean copy text - ONLY THE VALUES
+        st.write("### 📋 Copy This Data")
+        st.info("Select all text below (Ctrl+A), then copy (Ctrl+C), and paste into Excel.")
+        
+        copy_text = ""
+        for val in data_series:
+            clean_val = get_value_for_copy(val)
+            copy_text += f"{clean_val}\n"
+        
+        # Show the text in a code block for easy copying
+        st.code(copy_text, language="text")
+        
+        # Copy instructions
+        st.write("### 📌 How to Copy")
+        st.info("""
+        1. **Select all text** in the box above (Ctrl+A or Cmd+A)
+        2. **Copy** the text (Ctrl+C or Cmd+C)
+        3. **Go to Excel** and select the cell where you want to paste
+        4. **Paste** (Ctrl+V or Cmd+V)
+        """)
+        
+        # Download option
+        st.write("### 💾 Download as Text File")
+        if st.button(f"Download {selected_copy_col} data"):
+            st.download_button(
+                label="Click to download .txt file",
+                data=copy_text,
+                file_name=f"{selected_copy_col}_data.txt",
+                mime="text/plain"
+            )
+        
+        # Preview in table
+        with st.expander("📊 Preview Data in Table"):
+            preview_data = []
+            for i, val in enumerate(data_series.head(20)):
+                preview_data.append({
+                    'Row': i + 1,
+                    'Value': get_value_for_copy(val)
+                })
+            preview_df = pd.DataFrame(preview_data)
+            st.dataframe(preview_df, use_container_width=True)
+
+# -----------------------------
+# 📋 MERGE DATA FUNCTION
 # -----------------------------
 
 def merge_data(data_df, master_df, column_mapping, merge_key=None):
@@ -754,11 +861,28 @@ if master_file and data_file:
             st.dataframe(preview_df, use_container_width=True)
     
     # -----------------------------
+    # 📋 COPY-PASTE INTERFACE - NEW SECTION
+    # -----------------------------
+    if column_mapping:
+        st.markdown("---")
+        st.subheader("📋 Copy-Paste Ready Data")
+        st.info("Select a mapped column below to get copy-ready data for manual pasting into Excel.")
+        
+        # Create copy mapping from column mapping
+        copy_mapping = {k: v for k, v in column_mapping.items() if v != "-- Skip --"}
+        
+        if copy_mapping:
+            copy_data_interface(data_df, copy_mapping)
+        else:
+            st.warning("No columns mapped for copy-paste.")
+    
+    # -----------------------------
     # 💾 MERGE AND DOWNLOAD
     # -----------------------------
     if column_mapping:
         st.markdown("---")
         st.subheader("💾 Merge and Download")
+        st.info("Merge the mapped data directly into the Master file and download the updated file.")
         
         if st.button("🚀 Merge Data into Master File", type="primary"):
             try:
