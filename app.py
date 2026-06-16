@@ -119,12 +119,43 @@ def get_value_for_copy(val):
     # Handle other types
     return str(val).strip()
 
-def format_value_for_master(val, master_col_type='object'):
+def format_value_for_master(val, master_col_type='object', col_name=''):
     """
     Format a value to match the master column type
+    Special handling for date columns
     """
     if pd.isna(val) or val is None or val == "" or val == "nan":
         return ""
+    
+    # Special handling for date columns
+    if 'date' in col_name.lower() or 'actual date' in col_name.lower():
+        # If it's a datetime object
+        if isinstance(val, (pd.Timestamp, datetime)):
+            return val.strftime('%Y-%m-%d')
+        # If it's a string, try to parse it
+        if isinstance(val, str):
+            try:
+                # Try different date formats
+                for fmt in ['%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y%m%d', '%b %d, %Y', '%d-%b-%y']:
+                    try:
+                        dt = datetime.strptime(val, fmt)
+                        return dt.strftime('%Y-%m-%d')
+                    except:
+                        continue
+                # If all parsing fails, return as is
+                return val
+            except:
+                return val
+        # If it's a number (Excel date serial)
+        if isinstance(val, (int, float)):
+            try:
+                # Excel date serial (days since 1900-01-01)
+                if val > 0:
+                    dt = datetime(1899, 12, 30) + pd.Timedelta(days=val)
+                    return dt.strftime('%Y-%m-%d')
+            except:
+                return str(val)
+        return str(val)
     
     # For numeric columns
     if 'float' in str(master_col_type) or 'int' in str(master_col_type):
@@ -269,7 +300,7 @@ def detect_data_category(series):
     return best_category, best_score, sample_str.head(5).tolist()
 
 # -----------------------------
-# 📋 RAW DATA VIEWER - NEW
+# 📋 RAW DATA VIEWER
 # -----------------------------
 
 def raw_data_viewer(xls, sheet_name, header_idx):
@@ -632,12 +663,13 @@ def header_mapping_ui(data_df, master_df):
     return mapping
 
 # -----------------------------
-# 📋 FORMAT DATA FOR MASTER FUNCTION
+# 📋 FORMAT DATA FOR MASTER FUNCTION - UPDATED FOR DATES
 # -----------------------------
 
 def format_data_for_master(data_df, master_df, column_mapping):
     """
     Formats data from data file to match master file structure
+    Special handling for date columns
     Returns: formatted DataFrame ready for copy-paste
     """
     if not column_mapping:
@@ -663,7 +695,7 @@ def format_data_for_master(data_df, master_df, column_mapping):
             master_type = detect_column_type(master_df[master_col])
             formatted_values = []
             for val in data_df[mapped_data_col]:
-                formatted_val = format_value_for_master(val, master_type)
+                formatted_val = format_value_for_master(val, master_type, master_col)
                 formatted_values.append(formatted_val)
             formatted_df[master_col] = formatted_values
         else:
@@ -832,6 +864,11 @@ if master_file and data_file:
             st.write(f"**Total rows:** {len(formatted_df)}")
             st.write(f"**Total columns:** {len(formatted_df.columns)}")
             st.dataframe(formatted_df.head(10), use_container_width=True)
+            
+            # Show column population summary
+            st.write("### 📊 Column Population Summary")
+            col_pop = analyze_column_population(formatted_df)
+            st.dataframe(col_pop, use_container_width=True)
             
             # ---------- COPY-PASTE SECTION ----------
             st.write("### 📋 Copy-Paste Ready Data")
