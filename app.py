@@ -251,21 +251,25 @@ def header_mapping_ui(data_df, master_df):
                 # Select master column
                 selected_master = st.selectbox(
                     f"Map to Master column:",
-                    options=['-- Skip --'] + master_columns,
-                    index=0 if current_master == "" else master_columns.index(current_master) + 1,
+                    options=['-- Skip --', '-- Add as new column --'] + master_columns,
+                    index=0 if current_master == "" else (1 if current_master == "new" else master_columns.index(current_master) + 2),
                     key=f"map_{data_col}"
                 )
                 
                 # Update mapping
-                if selected_master != '-- Skip --':
-                    st.session_state.column_mapping[data_col] = selected_master
-                else:
+                if selected_master == '-- Skip --':
                     if data_col in st.session_state.column_mapping:
                         del st.session_state.column_mapping[data_col]
+                elif selected_master == '-- Add as new column --':
+                    st.session_state.column_mapping[data_col] = "new"
+                else:
+                    st.session_state.column_mapping[data_col] = selected_master
             
             with col3:
                 # Show what will happen
-                if selected_master != '-- Skip --':
+                if selected_master == '-- Add as new column --':
+                    st.success("✅ Will add as new column")
+                elif selected_master != '-- Skip --':
                     # Check if data types match
                     data_type = str(data_df[data_col].dtype)
                     master_type = str(master_df[selected_master].dtype)
@@ -292,16 +296,17 @@ def header_mapping_ui(data_df, master_df):
     return st.session_state.column_mapping
 
 # -----------------------------
-# 📋 MERGE DATA FUNCTION
+# 📋 MERGE DATA FUNCTION - FIXED
 # -----------------------------
 
 def merge_data(data_df, master_df, column_mapping, merge_key=None):
     """
     Merges data from data file into master file based on column mapping
+    Handles different row counts properly
     """
     if not column_mapping:
         st.warning("No columns mapped. Please map columns first.")
-        return None
+        return None, [], []
     
     # Create a copy of master file
     merged_df = master_df.copy()
@@ -311,46 +316,147 @@ def merge_data(data_df, master_df, column_mapping, merge_key=None):
     merged_results = []
     
     # Process each mapping
-    for data_col, master_col in column_mapping.items():
-        if data_col in data_df.columns and master_col in master_df.columns:
-            # Check if we should merge based on a key or just add as new column
+    for data_col, master_col_action in column_mapping.items():
+        if data_col not in data_df.columns:
+            continue
+            
+        # Check if we should merge based on a key or just add as new column
+        if merge_key and merge_key in data_df.columns and merge_key in master_df.columns:
+            # MERGE BY KEY - handles different row counts
+            st.info(f"Merging '{data_col}' into '{master_col_action}' using '{merge_key}' as key")
+            
+            # Create a dictionary for fast lookup
+            data_dict = {}
+            for idx, row in data_df.iterrows():
+                key_val = str(row[merge_key]).strip()
+                if key_val and key_val != 'nan' and key_val != '':
+                    data_dict[key_val] = row[data_col]
+            
+            # Update master with data from data file
+            matched_count = 0
+            for idx, row in merged_df.iterrows():
+                key_val = str(row[merge_key]).strip()
+                if key_val and key_val != 'nan' and key_val != '' and key_val in data_dict:
+                    merged_df.loc[idx, master_col_action] = data_dict[key_val]
+                    matched_count += 1
+            
+            merged_results.append({
+                'Data Column': data_col,
+                'Master Column': master_col_action,
+                'Rows Matched': matched_count,
+                'Total Rows': len(merged_df),
+                'Match Rate': f"{(matched_count/len(merged_df)*100):.1f}%" if len(merged_df) > 0 else "0%"
+            })
+            
+        elif master_col_action == "new":
+            # ADD AS NEW COLUMN - handles different row counts
+            new_col_name = f"{data_col}_from_data"
+            
+            # Create a dictionary for fast lookup if we have a merge key
             if merge_key and merge_key in data_df.columns and merge_key in master_df.columns:
-                # Merge based on key
-                st.info(f"Merging '{data_col}' into '{master_col}' using '{merge_key}' as key")
-                
-                # Create a dictionary for fast lookup
                 data_dict = {}
                 for idx, row in data_df.iterrows():
                     key_val = str(row[merge_key]).strip()
-                    if key_val and key_val != 'nan':
+                    if key_val and key_val != 'nan' and key_val != '':
                         data_dict[key_val] = row[data_col]
                 
-                # Update master with data from data file
+                # Fill the new column based on matching keys
+                new_values = []
                 matched_count = 0
                 for idx, row in merged_df.iterrows():
                     key_val = str(row[merge_key]).strip()
-                    if key_val in data_dict:
-                        merged_df.loc[idx, master_col] = data_dict[key_val]
+                    if key_val and key_val != 'nan' and key_val != '' and key_val in data_dict:
+                        new_values.append(data_dict[key_val])
+                        matched_count += 1
+                    else:
+                        new_values.append("")
+                
+                merged_df[new_col_name] = new_values
+                added_columns.append(new_col_name)
+                merged_results.append({
+                    'Data Column': data_col,
+                    'Master Column': 'New Column Added',
+                    'New Name': new_col_name,
+                    'Rows Matched': matched_count,
+                    'Total Rows': len(merged_df),
+                    'Match Rate': f"{(matched_count/len(merged_df)*100):.1f}%" if len(merged_df) > 0 else "0%"
+                })
+            else:
+                # Just add as new column with matching row count
+                # If data has more rows than master, we'll pad with empty values
+                # If data has fewer rows, we'll repeat the last value or use empty
+                if len(data_df) >= len(merged_df):
+                    # Data has enough rows, take first N rows
+                    new_values = data_df[data_col].head(len(merged_df)).tolist()
+                else:
+                    # Data has fewer rows, pad with empty values
+                    new_values = data_df[data_col].tolist()
+                    # Pad with empty strings to match master length
+                    new_values.extend([""] * (len(merged_df) - len(data_df)))
+                
+                merged_df[new_col_name] = new_values
+                added_columns.append(new_col_name)
+                merged_results.append({
+                    'Data Column': data_col,
+                    'Master Column': 'New Column Added',
+                    'New Name': new_col_name,
+                    'Rows Added': len(data_df),
+                    'Total Rows': len(merged_df)
+                })
+        else:
+            # UPDATE EXISTING COLUMN - handles different row counts
+            # This is the tricky case - we need to handle mismatched lengths
+            
+            if merge_key and merge_key in data_df.columns and merge_key in master_df.columns:
+                # Use merge key to match records
+                data_dict = {}
+                for idx, row in data_df.iterrows():
+                    key_val = str(row[merge_key]).strip()
+                    if key_val and key_val != 'nan' and key_val != '':
+                        data_dict[key_val] = row[data_col]
+                
+                matched_count = 0
+                for idx, row in merged_df.iterrows():
+                    key_val = str(row[merge_key]).strip()
+                    if key_val and key_val != 'nan' and key_val != '' and key_val in data_dict:
+                        merged_df.loc[idx, master_col_action] = data_dict[key_val]
                         matched_count += 1
                 
                 merged_results.append({
                     'Data Column': data_col,
-                    'Master Column': master_col,
+                    'Master Column': master_col_action,
                     'Rows Matched': matched_count,
                     'Total Rows': len(merged_df),
-                    'Match Rate': f"{(matched_count/len(merged_df)*100):.1f}%"
+                    'Match Rate': f"{(matched_count/len(merged_df)*100):.1f}%" if len(merged_df) > 0 else "0%"
                 })
             else:
-                # Just add as new column with suffix
-                new_col_name = f"{data_col}_from_data"
-                if new_col_name not in merged_df.columns:
-                    merged_df[new_col_name] = data_df[data_col].values
+                # Without a merge key, we can only update if row counts match
+                if len(data_df) == len(merged_df):
+                    merged_df[master_col_action] = data_df[data_col].tolist()
+                    merged_results.append({
+                        'Data Column': data_col,
+                        'Master Column': master_col_action,
+                        'Rows Updated': len(data_df),
+                        'Total Rows': len(merged_df),
+                        'Status': '✅ Updated all rows'
+                    })
+                else:
+                    # Row counts don't match - create a new column instead
+                    new_col_name = f"{master_col_action}_from_data"
+                    
+                    if len(data_df) >= len(merged_df):
+                        new_values = data_df[data_col].head(len(merged_df)).tolist()
+                    else:
+                        new_values = data_df[data_col].tolist()
+                        new_values.extend([""] * (len(merged_df) - len(data_df)))
+                    
+                    merged_df[new_col_name] = new_values
                     added_columns.append(new_col_name)
                     merged_results.append({
                         'Data Column': data_col,
-                        'Master Column': 'New Column Added',
+                        'Master Column': master_col_action,
                         'New Name': new_col_name,
-                        'Rows Added': len(data_df)
+                        'Status': '⚠️ Row count mismatch - added as new column instead'
                     })
     
     return merged_df, added_columns, merged_results
@@ -421,6 +527,10 @@ if master_file and data_file:
         st.write(f"**Sheet:** {selected_data_sheet}")
         st.write(f"**Rows:** {len(data_df)}")
         st.write(f"**Columns:** {len(data_df.columns)}")
+    
+    # Show row count difference warning
+    if len(data_df) != len(master_df):
+        st.warning(f"⚠️ Row count mismatch: Master has {len(master_df)} rows, Data has {len(data_df)} rows. Use 'Merge by key' to handle this properly.")
 
     # -----------------------------
     # 📊 COLUMN MAPPING
@@ -432,19 +542,37 @@ if master_file and data_file:
     st.markdown("---")
     st.subheader("🔑 Merge Options")
     
-    merge_by_key = st.checkbox("Merge by matching key column (e.g., PLAID)", value=False)
+    merge_by_key = st.checkbox("Merge by matching key column (e.g., PLAID)", value=True, help="Recommended when files have different row counts")
     
     merge_key = None
     if merge_by_key:
         # Find common columns
         common_cols = list(set(master_df.columns).intersection(set(data_df.columns)))
         if common_cols:
+            # Suggest PLAID if available
+            suggested_key = None
+            for col in common_cols:
+                if 'plaid' in col.lower() or 'PLAID' in col:
+                    suggested_key = col
+                    break
+            
             merge_key = st.selectbox(
                 "Select key column to match records:",
                 options=common_cols,
+                index=common_cols.index(suggested_key) if suggested_key in common_cols else 0,
                 help="This column will be used to match records between files"
             )
             st.info(f"✅ Merging will match records using '{merge_key}'")
+            
+            # Show sample of matching
+            st.write("**Matching Key Sample:**")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**Master {merge_key}:**")
+                st.write(master_df[merge_key].head(10).tolist())
+            with col2:
+                st.write(f"**Data {merge_key}:**")
+                st.write(data_df[merge_key].head(10).tolist())
         else:
             st.warning("No common columns found. Please ensure both files have a matching identifier column (e.g., PLAID).")
     
@@ -462,22 +590,6 @@ if master_file and data_file:
         if preview_data:
             preview_df = pd.DataFrame(preview_data)
             st.dataframe(preview_df, use_container_width=True)
-        
-        # Show merge preview
-        if merge_by_key and merge_key:
-            st.write(f"**Merge Preview (matching by '{merge_key}'):**")
-            
-            # Show sample of matching
-            master_sample = master_df[[merge_key] + list(column_mapping.values())[:3]].head(5)
-            data_sample = data_df[[merge_key] + list(column_mapping.keys())[:3]].head(5)
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("**Master Sample:**")
-                st.dataframe(master_sample, use_container_width=True)
-            with col2:
-                st.write("**Data Sample:**")
-                st.dataframe(data_sample, use_container_width=True)
     
     # -----------------------------
     # 💾 MERGE AND DOWNLOAD
@@ -526,6 +638,7 @@ if master_file and data_file:
                     
             except Exception as err:
                 st.error(f"Failed to merge files: {err}")
+                st.write("**Error details:**", str(err))
     else:
         st.info("Please map at least one column from the Data File to the Master File.")
 
