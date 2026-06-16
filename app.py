@@ -70,66 +70,55 @@ def detect_sheet(xls: pd.ExcelFile, keywords: list) -> str:
             return sheet
     return xls.sheet_names[0]
 
-def format_value_for_display(val, format_type=None):
+def detect_column_type(series):
     """
-    Formats a value for proper display, handling different data types
+    Detects the appropriate type for a column based on its data
     """
-    if pd.isna(val) or val is None:
-        return ""
+    # Get non-null values
+    non_null = series.dropna()
+    if len(non_null) == 0:
+        return 'object'
     
-    # Convert to string
-    val_str = str(val)
+    # Check if all values can be converted to numeric
+    try:
+        pd.to_numeric(non_null)
+        # Check if they are integers
+        try:
+            if all(isinstance(x, (int, float)) and (isinstance(x, float) and x.is_integer()) or isinstance(x, int) for x in non_null):
+                return 'int64'
+        except:
+            pass
+        return 'float64'
+    except:
+        pass
     
-    # Handle float values like 2024.0 -> 2024
-    if format_type == 'year' and isinstance(val, float):
-        if val.is_integer():
-            return str(int(val))
-        else:
-            return val_str
+    # Check if it's datetime
+    try:
+        pd.to_datetime(non_null)
+        return 'datetime64'
+    except:
+        pass
     
-    # Handle dates - remove time component if present
-    if format_type == 'date':
-        if ' ' in val_str and not val_str.startswith('1900'):
-            return val_str.split(' ')[0]
-    
-    # Handle numeric strings - remove trailing .0 if present
-    if format_type == 'text':
-        if val_str.endswith('.0'):
-            return val_str[:-2]
-    
-    return val_str
+    # Default to object (string)
+    return 'object'
 
-def safe_convert_value(val, target_type='str'):
+def get_numeric_value(val):
     """
-    Safely converts a value to the target type
+    Safely converts a value to numeric (float or int) for numeric columns
+    Returns: (converted_value, is_float)
     """
-    if pd.isna(val) or val is None:
-        return ""
+    if pd.isna(val) or val is None or val == "" or val == "nan":
+        return pd.NA, False
     
-    if target_type == 'str' or target_type == 'string':
-        # Handle float to string conversion
-        if isinstance(val, float):
-            if val.is_integer():
-                return str(int(val))
-            else:
-                return str(val)
-        return str(val)
-    
-    if target_type == 'int':
-        try:
-            if isinstance(val, float) and val.is_integer():
-                return int(val)
-            return int(float(val))
-        except:
-            return val
-    
-    if target_type == 'float':
-        try:
-            return float(val)
-        except:
-            return val
-    
-    return val
+    try:
+        # Try to convert to float first
+        float_val = float(val)
+        # Check if it's an integer
+        if float_val.is_integer():
+            return int(float_val), False
+        return float_val, True
+    except:
+        return pd.NA, False
 
 # -----------------------------
 # 📊 DATA QUALITY AND POPULATION ANALYSIS
@@ -165,8 +154,12 @@ def analyze_column_population(df):
         # Get data category
         category, confidence, samples = detect_data_category(df[col])
         
+        # Get column type
+        col_type = detect_column_type(df[col])
+        
         results.append({
             'Column': col,
+            'Type': col_type,
             'Total Rows': total_rows,
             'Populated': effective_populated,
             'Null': null_count,
@@ -304,9 +297,7 @@ def header_mapping_ui(data_df, master_df):
                 # Show sample values
                 sample_vals = data_df[data_col].dropna().head(5).tolist()
                 if sample_vals:
-                    # Format sample values for display
-                    formatted_samples = [format_value_for_display(v) for v in sample_vals]
-                    st.write(f"Sample: {', '.join(str(v) for v in formatted_samples[:3])}")
+                    st.write(f"Sample: {', '.join(str(v) for v in sample_vals[:3])}")
                 else:
                     st.write("(Empty column)")
             
@@ -333,7 +324,13 @@ def header_mapping_ui(data_df, master_df):
                 if selected_master == '-- Add as new column --':
                     st.success("✅ Will add as new column")
                 elif selected_master != '-- Skip --':
-                    st.info(f"Will update '{selected_master}'")
+                    # Get column types
+                    data_type = detect_column_type(data_df[data_col])
+                    master_type = detect_column_type(master_df[selected_master])
+                    if data_type == master_type:
+                        st.success("✅ Type match")
+                    else:
+                        st.warning(f"⚠️ {data_type} → {master_type}")
             
             mapping_data.append({
                 'Data Column': data_col,
@@ -353,7 +350,7 @@ def header_mapping_ui(data_df, master_df):
     return st.session_state.column_mapping
 
 # -----------------------------
-# 📋 MERGE DATA FUNCTION - FIXED WITH TYPE CONVERSION
+# 📋 MERGE DATA FUNCTION - FIXED FOR NUMERIC COLUMNS
 # -----------------------------
 
 def merge_data(data_df, master_df, column_mapping, merge_key=None):
@@ -376,8 +373,13 @@ def merge_data(data_df, master_df, column_mapping, merge_key=None):
     for data_col, master_col_action in column_mapping.items():
         if data_col not in data_df.columns:
             continue
-            
-        # Get the data series and format for merging
+        
+        # Get the master column type
+        master_col_type = 'object'
+        if master_col_action != "new" and master_col_action in master_df.columns:
+            master_col_type = str(master_df[master_col_action].dtype)
+        
+        # Get the data series
         data_series = data_df[data_col]
         
         # Check if we should merge based on a key or just add as new column
@@ -390,30 +392,32 @@ def merge_data(data_df, master_df, column_mapping, merge_key=None):
             for idx, row in data_df.iterrows():
                 key_val = str(row[merge_key]).strip()
                 if key_val and key_val != 'nan' and key_val != '':
-                    # Get the value and format it properly
                     val = row[data_col]
-                    # Handle the specific case for PROJECT or PROGRAM
-                    if 'project' in data_col.lower() or 'program' in data_col.lower():
-                        # Keep as string, remove any .0 if present
-                        if isinstance(val, float):
-                            val = str(int(val)) if val.is_integer() else str(val)
-                        else:
-                            val = str(val)
-                    # Handle YEAR columns
-                    elif 'year' in data_col.lower() or 'YEAR' in data_col:
-                        # Convert to integer if it's a float year
-                        if isinstance(val, float):
-                            if val.is_integer():
-                                val = str(int(val))
-                            else:
-                                val = str(val)
-                        else:
-                            val = str(val)
-                    else:
-                        # Default string conversion
-                        val = str(val) if not pd.isna(val) else ""
                     
-                    data_dict[key_val] = val
+                    # Convert based on master column type
+                    if 'float' in master_col_type or 'int' in master_col_type:
+                        # Numeric column - use pd.NA for empty values
+                        if pd.isna(val) or val is None or val == "" or val == "nan":
+                            converted_val = pd.NA
+                        else:
+                            try:
+                                float_val = float(val)
+                                if 'int' in master_col_type and float_val.is_integer():
+                                    converted_val = int(float_val)
+                                else:
+                                    converted_val = float_val
+                            except:
+                                converted_val = pd.NA
+                    else:
+                        # String/text column
+                        if pd.isna(val) or val is None:
+                            converted_val = ""
+                        else:
+                            converted_val = str(val)
+                            if converted_val.endswith('.0'):
+                                converted_val = converted_val[:-2]
+                    
+                    data_dict[key_val] = converted_val
             
             # Update master with data from data file
             matched_count = 0
@@ -426,6 +430,7 @@ def merge_data(data_df, master_df, column_mapping, merge_key=None):
             merged_results.append({
                 'Data Column': data_col,
                 'Master Column': master_col_action,
+                'Master Type': master_col_type,
                 'Rows Matched': matched_count,
                 'Total Rows': len(merged_df),
                 'Match Rate': f"{(matched_count/len(merged_df)*100):.1f}%" if len(merged_df) > 0 else "0%"
@@ -442,11 +447,15 @@ def merge_data(data_df, master_df, column_mapping, merge_key=None):
                     key_val = str(row[merge_key]).strip()
                     if key_val and key_val != 'nan' and key_val != '':
                         val = row[data_col]
-                        # Format the value
-                        if isinstance(val, float) and val.is_integer():
-                            val = str(int(val))
+                        # Format based on data type
+                        if pd.isna(val) or val is None:
+                            val = ""
+                        elif isinstance(val, float) and val.is_integer():
+                            val = int(val)
+                        elif isinstance(val, float):
+                            val = val
                         else:
-                            val = str(val) if not pd.isna(val) else ""
+                            val = str(val)
                         data_dict[key_val] = val
                 
                 # Fill the new column based on matching keys
@@ -472,10 +481,9 @@ def merge_data(data_df, master_df, column_mapping, merge_key=None):
                 })
             else:
                 # Just add as new column with matching row count
-                # Format values properly
                 formatted_values = []
                 for val in data_series:
-                    if pd.isna(val):
+                    if pd.isna(val) or val is None:
                         formatted_values.append("")
                     elif isinstance(val, float) and val.is_integer():
                         formatted_values.append(str(int(val)))
@@ -506,12 +514,31 @@ def merge_data(data_df, master_df, column_mapping, merge_key=None):
                     key_val = str(row[merge_key]).strip()
                     if key_val and key_val != 'nan' and key_val != '':
                         val = row[data_col]
-                        # Format the value
-                        if isinstance(val, float) and val.is_integer():
-                            val = str(int(val))
+                        
+                        # Convert based on master column type
+                        if 'float' in master_col_type or 'int' in master_col_type:
+                            # Numeric column - use pd.NA for empty values
+                            if pd.isna(val) or val is None or val == "" or val == "nan":
+                                converted_val = pd.NA
+                            else:
+                                try:
+                                    float_val = float(val)
+                                    if 'int' in master_col_type and float_val.is_integer():
+                                        converted_val = int(float_val)
+                                    else:
+                                        converted_val = float_val
+                                except:
+                                    converted_val = pd.NA
                         else:
-                            val = str(val) if not pd.isna(val) else ""
-                        data_dict[key_val] = val
+                            # String/text column
+                            if pd.isna(val) or val is None:
+                                converted_val = ""
+                            else:
+                                converted_val = str(val)
+                                if converted_val.endswith('.0'):
+                                    converted_val = converted_val[:-2]
+                        
+                        data_dict[key_val] = converted_val
                 
                 matched_count = 0
                 for idx, row in merged_df.iterrows():
@@ -523,6 +550,7 @@ def merge_data(data_df, master_df, column_mapping, merge_key=None):
                 merged_results.append({
                     'Data Column': data_col,
                     'Master Column': master_col_action,
+                    'Master Type': master_col_type,
                     'Rows Matched': matched_count,
                     'Total Rows': len(merged_df),
                     'Match Rate': f"{(matched_count/len(merged_df)*100):.1f}%" if len(merged_df) > 0 else "0%"
@@ -530,15 +558,31 @@ def merge_data(data_df, master_df, column_mapping, merge_key=None):
             else:
                 # Without a merge key, we can only update if row counts match
                 if len(data_df) == len(merged_df):
-                    # Format values properly
+                    # Format values based on master column type
                     formatted_values = []
                     for val in data_series:
-                        if pd.isna(val):
-                            formatted_values.append("")
-                        elif isinstance(val, float) and val.is_integer():
-                            formatted_values.append(str(int(val)))
+                        if 'float' in master_col_type or 'int' in master_col_type:
+                            # Numeric column - use pd.NA for empty values
+                            if pd.isna(val) or val is None or val == "" or val == "nan":
+                                formatted_values.append(pd.NA)
+                            else:
+                                try:
+                                    float_val = float(val)
+                                    if 'int' in master_col_type and float_val.is_integer():
+                                        formatted_values.append(int(float_val))
+                                    else:
+                                        formatted_values.append(float_val)
+                                except:
+                                    formatted_values.append(pd.NA)
                         else:
-                            formatted_values.append(str(val))
+                            # String/text column
+                            if pd.isna(val) or val is None:
+                                formatted_values.append("")
+                            else:
+                                val_str = str(val)
+                                if val_str.endswith('.0'):
+                                    val_str = val_str[:-2]
+                                formatted_values.append(val_str)
                     
                     merged_df[master_col_action] = formatted_values
                     merged_results.append({
@@ -554,7 +598,7 @@ def merge_data(data_df, master_df, column_mapping, merge_key=None):
                     
                     formatted_values = []
                     for val in data_series:
-                        if pd.isna(val):
+                        if pd.isna(val) or val is None:
                             formatted_values.append("")
                         elif isinstance(val, float) and val.is_integer():
                             formatted_values.append(str(int(val)))
@@ -702,15 +746,8 @@ if master_file and data_file:
         preview_data = {}
         for data_col, master_col in column_mapping.items():
             if data_col in data_df.columns:
-                # Format values for preview
                 sample_vals = data_df[data_col].dropna().head(5).tolist()
-                formatted_vals = []
-                for val in sample_vals:
-                    if isinstance(val, float) and val.is_integer():
-                        formatted_vals.append(str(int(val)))
-                    else:
-                        formatted_vals.append(str(val))
-                preview_data[f"{data_col} → {master_col}"] = formatted_vals
+                preview_data[f"{data_col} → {master_col}"] = sample_vals
         
         if preview_data:
             preview_df = pd.DataFrame(preview_data)
