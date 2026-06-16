@@ -5,6 +5,7 @@ import io
 import openpyxl
 from datetime import datetime
 import re
+from collections import Counter
 
 st.set_page_config(page_title="OLT Tracker Tool", layout="wide")
 
@@ -191,7 +192,6 @@ def verify_category_match(master_category, master_score, olt_category, olt_score
     
     # If both categories are in the same group, they're compatible
     if master_group and olt_group and master_group == olt_group:
-        # Calculate confidence based on scores
         avg_score = (master_score + olt_score) / 2
         if avg_score >= 0.8:
             return True, "High", f"Both are {master_category} ({avg_score:.0%} confidence)"
@@ -224,7 +224,135 @@ def verify_category_match(master_category, master_score, olt_category, olt_score
     return False, "None", f"Category mismatch: {master_category} ↔ {olt_category}"
 
 # -----------------------------
-# 📊 HEADER MAPPING WITH DATA CATEGORY VERIFICATION
+# 📊 DATA SIMILARITY & REPEATED VALUES ANALYSIS
+# -----------------------------
+
+def analyze_data_patterns(series):
+    """
+    Analyzes data patterns including repeated values, unique values, and distributions
+    Returns: (pattern_summary, repeated_values, uniqueness_score)
+    """
+    if len(series) == 0:
+        return "Empty", {}, 0
+    
+    # Clean the data
+    clean_series = series.dropna().astype(str).str.strip()
+    clean_series = clean_series[clean_series != '']
+    clean_series = clean_series[clean_series != 'nan']
+    
+    if len(clean_series) == 0:
+        return "All empty", {}, 0
+    
+    # Get value counts
+    value_counts = Counter(clean_series)
+    total_values = len(clean_series)
+    unique_values = len(value_counts)
+    
+    # Calculate uniqueness score (0-1, where 1 means all unique)
+    uniqueness_score = unique_values / total_values if total_values > 0 else 0
+    
+    # Find repeated values (appear more than once)
+    repeated_values = {k: v for k, v in value_counts.items() if v > 1}
+    
+    # Get the most common repeated values
+    top_repeated = dict(sorted(repeated_values.items(), key=lambda x: x[1], reverse=True)[:10])
+    
+    # Determine pattern type
+    if uniqueness_score > 0.9:
+        pattern_type = "Highly Unique (IDs/Keys)"
+    elif uniqueness_score > 0.7:
+        pattern_type = "Mostly Unique (Mixed)"
+    elif uniqueness_score > 0.4:
+        pattern_type = "Moderately Repeated (Categories)"
+    elif uniqueness_score > 0.1:
+        pattern_type = "Highly Repeated (Status/Type)"
+    else:
+        pattern_type = "Almost Constant (Single Value)"
+    
+    pattern_summary = {
+        'pattern_type': pattern_type,
+        'total_values': total_values,
+        'unique_values': unique_values,
+        'uniqueness_score': uniqueness_score,
+        'repeated_count': len(repeated_values),
+        'most_repeated': top_repeated
+    }
+    
+    return pattern_summary, top_repeated, uniqueness_score
+
+def verify_data_similarity_with_patterns(master_series, olt_series, threshold=0.6):
+    """
+    Enhanced verification that checks both category patterns and actual value overlap
+    Returns: (similarity_score, is_similar, details, common_values, pattern_match)
+    """
+    if len(master_series) == 0 or len(olt_series) == 0:
+        return 0, False, "Empty series", [], False
+    
+    # Get pattern analysis for both series
+    master_pattern, master_repeated, master_uniqueness = analyze_data_patterns(master_series)
+    olt_pattern, olt_repeated, olt_uniqueness = analyze_data_patterns(olt_series)
+    
+    # Clean data for comparison
+    master_clean = master_series.dropna().astype(str).str.strip()
+    master_clean = master_clean[master_clean != '']
+    master_clean = master_clean[master_clean != 'nan']
+    
+    olt_clean = olt_series.dropna().astype(str).str.strip()
+    olt_clean = olt_clean[olt_clean != '']
+    olt_clean = olt_clean[olt_clean != 'nan']
+    
+    if len(master_clean) == 0 or len(olt_clean) == 0:
+        return 0, False, "No valid values to compare", [], False
+    
+    # 1. Check pattern similarity (uniqueness and repetition patterns)
+    uniqueness_diff = abs(master_uniqueness - olt_uniqueness)
+    pattern_similarity = 1 - uniqueness_diff if uniqueness_diff <= 1 else 0
+    
+    # 2. Check value overlap (actual data similarity)
+    common_values = set(master_clean.head(100)).intersection(set(olt_clean.head(100)))
+    overlap_ratio = len(common_values) / max(len(set(master_clean.head(100))), len(set(olt_clean.head(100)))) if len(set(master_clean.head(100))) > 0 and len(set(olt_clean.head(100))) > 0 else 0
+    
+    # 3. Check repeated value patterns
+    master_top_repeated = Counter(master_clean).most_common(5)
+    olt_top_repeated = Counter(olt_clean).most_common(5)
+    
+    # Check if top repeated values are similar
+    repeated_overlap = 0
+    for m_val, m_count in master_top_repeated:
+        for o_val, o_count in olt_top_repeated:
+            if clean_string_normalization(m_val) == clean_string_normalization(o_val):
+                repeated_overlap += 1
+                break
+    
+    repeated_similarity = repeated_overlap / max(len(master_top_repeated), len(olt_top_repeated)) if max(len(master_top_repeated), len(olt_top_repeated)) > 0 else 0
+    
+    # Combined similarity score
+    similarity_score = (pattern_similarity * 0.3) + (overlap_ratio * 0.4) + (repeated_similarity * 0.3)
+    
+    # Determine if similar
+    is_similar = similarity_score >= threshold
+    
+    # Build details
+    details = {
+        'pattern_similarity': pattern_similarity,
+        'overlap_ratio': overlap_ratio,
+        'repeated_similarity': repeated_similarity,
+        'master_pattern': master_pattern['pattern_type'],
+        'olt_pattern': olt_pattern['pattern_type'],
+        'master_uniqueness': master_uniqueness,
+        'olt_uniqueness': olt_uniqueness,
+        'master_repeated_count': len(master_repeated),
+        'olt_repeated_count': len(olt_repeated)
+    }
+    
+    pattern_match = (master_pattern['pattern_type'] == olt_pattern['pattern_type']) or \
+                   (master_uniqueness > 0.7 and olt_uniqueness > 0.7) or \
+                   (master_uniqueness < 0.3 and olt_uniqueness < 0.3)
+    
+    return similarity_score, is_similar, details, list(common_values)[:10], pattern_match
+
+# -----------------------------
+# 📊 HEADER MAPPING WITH COMPREHENSIVE VERIFICATION
 # -----------------------------
 
 def get_header_mapping():
@@ -494,23 +622,26 @@ if master_file and olt_file:
     olt_df.columns = olt_df_cleaned.columns
 
     # -----------------------------
-    # 📊 Header Mapping with Category Verification
+    # 📊 Header Mapping with Comprehensive Verification
     # -----------------------------
-    st.subheader("🔍 Header Mapping with Category Verification")
-    st.info("This tool verifies column mappings by comparing the **type/category** of data in each column, not the specific values.")
+    st.subheader("🔍 Comprehensive Column Mapping Verification")
+    st.info("This tool verifies column mappings using:")
+    st.info("1. **Data Category/Type** - What kind of data is in the column")
+    st.info("2. **Data Pattern Analysis** - Uniqueness and repetition patterns")
+    st.info("3. **Actual Data Similarity** - Overlap in actual values")
 
     # Get mapping configuration
     header_mapping = get_header_mapping()
     
     # Create interactive mapping verification
-    st.write("### 📋 Category-Based Column Mapping Verification")
+    st.write("### 📋 Comprehensive Column Mapping Verification")
     
     # Initialize session state for mapping verification
     if 'mapping_confirmed' not in st.session_state:
         st.session_state.mapping_confirmed = False
         st.session_state.manual_mappings = {}
     
-    # Display current mappings with category verification
+    # Display current mappings with comprehensive verification
     mapping_verified = True
     mapping_df_data = []
     
@@ -542,16 +673,21 @@ if master_file and olt_file:
             if manual_olt:
                 olt_col = manual_olt
         
-        # Get data category verification
+        # Get comprehensive verification
         master_category = "N/A"
         master_confidence = 0
         olt_category = "N/A"
         olt_confidence = 0
+        master_samples = []
+        olt_samples = []
+        pattern_match = False
+        similarity_score = 0
+        is_similar = False
+        details = {}
+        common_values = []
         category_match = "❌ Not Found"
         match_confidence = "None"
         match_description = ""
-        master_samples = []
-        olt_samples = []
         
         if master_col:
             master_category, master_confidence, master_samples = detect_data_category(master_df[master_col])
@@ -560,15 +696,36 @@ if master_file and olt_file:
             olt_category, olt_confidence, olt_samples = detect_data_category(olt_df[olt_col])
         
         if master_col and olt_col:
-            is_match, match_confidence, match_description = verify_category_match(
+            # Category verification
+            is_cat_match, cat_conf, cat_desc = verify_category_match(
                 master_category, master_confidence,
                 olt_category, olt_confidence
             )
             
-            if is_match:
-                category_match = f"✅ {match_confidence}"
+            # Data similarity with pattern analysis
+            similarity_score, is_similar, details, common_values, pattern_match = verify_data_similarity_with_patterns(
+                master_df[master_col],
+                olt_df[olt_col]
+            )
+            
+            # Combined verification
+            if is_cat_match and is_similar and pattern_match:
+                category_match = "✅ All Good"
+                match_confidence = "High"
+                match_description = f"Category: {cat_desc}, Similarity: {similarity_score:.1%}"
+            elif is_cat_match and (is_similar or pattern_match):
+                category_match = "✅ Acceptable"
+                match_confidence = "Medium"
+                match_description = f"Category: {cat_desc}, Similarity: {similarity_score:.1%}"
+            elif is_cat_match:
+                category_match = "⚠️ Category OK, Data mismatch"
+                match_confidence = "Low"
+                match_description = f"Category matches but data patterns differ (Sim: {similarity_score:.1%})"
+                mapping_verified = False
             else:
-                category_match = f"⚠️ {match_confidence}"
+                category_match = "⚠️ Check Mapping"
+                match_confidence = "Low"
+                match_description = f"Category mismatch: {master_category} ↔ {olt_category}"
                 mapping_verified = False
         elif master_col:
             category_match = "⚠️ Master Only"
@@ -588,10 +745,11 @@ if master_file and olt_file:
             'OLT Column': olt_col or '❌ NOT FOUND',
             'Master Category': f"{master_category} ({master_confidence:.0%})" if master_col else 'N/A',
             'OLT Category': f"{olt_category} ({olt_confidence:.0%})" if olt_col else 'N/A',
+            'Pattern Match': '✅' if pattern_match else '⚠️' if master_col and olt_col else 'N/A',
+            'Data Similarity': f"{similarity_score:.1%}" if master_col and olt_col else 'N/A',
+            'Common Values': ', '.join(common_values[:3]) if common_values else 'None',
             'Category Match': category_match,
-            'Match Details': match_description if master_col and olt_col else '',
-            'Master Sample': ', '.join(master_samples[:3]) if master_samples else '',
-            'OLT Sample': ', '.join(olt_samples[:3]) if olt_samples else ''
+            'Match Details': match_description if master_col and olt_col else ''
         })
     
     # Display mapping table
@@ -599,12 +757,10 @@ if master_file and olt_file:
     
     # Color coding function
     def color_mapping_status(val):
-        if '✅' in str(val) and 'High' in str(val):
+        if '✅ All Good' in str(val):
             return 'background-color: #90EE90'
-        elif '✅' in str(val) and 'Medium' in str(val):
+        elif '✅ Acceptable' in str(val):
             return 'background-color: #98FB98'
-        elif '✅' in str(val) and 'Low' in str(val):
-            return 'background-color: #FFFACD'
         elif '⚠️' in str(val):
             return 'background-color: #FFD700'
         elif '❌' in str(val):
@@ -613,6 +769,74 @@ if master_file and olt_file:
     
     styled_mapping = mapping_df.style.map(color_mapping_status, subset=['Category Match'])
     st.dataframe(styled_mapping, use_container_width=True)
+    
+    # Show data pattern analysis for critical columns
+    with st.expander("📊 Detailed Data Pattern Analysis"):
+        st.write("This shows the data patterns for each column, including uniqueness and repetition patterns.")
+        
+        # Analyze PLAID column
+        if master_plaid_col_clean and olt_plaid_col_clean:
+            st.write("**PLAID Column Pattern Analysis:**")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**Master PLAID Patterns:**")
+                master_pattern, master_repeated, master_unique = analyze_data_patterns(master_df[master_plaid_col_clean])
+                st.write(f"- Pattern Type: {master_pattern['pattern_type']}")
+                st.write(f"- Unique Values: {master_pattern['unique_values']}")
+                st.write(f"- Uniqueness Score: {master_pattern['uniqueness_score']:.1%}")
+                if master_repeated:
+                    st.write("- Top Repeated Values:")
+                    for val, count in list(master_repeated.items())[:3]:
+                        st.write(f"  - {val}: {count} times")
+            
+            with col2:
+                st.write("**OLT PLAID Patterns:**")
+                olt_pattern, olt_repeated, olt_unique = analyze_data_patterns(olt_df[olt_plaid_col_clean])
+                st.write(f"- Pattern Type: {olt_pattern['pattern_type']}")
+                st.write(f"- Unique Values: {olt_pattern['unique_values']}")
+                st.write(f"- Uniqueness Score: {olt_pattern['uniqueness_score']:.1%}")
+                if olt_repeated:
+                    st.write("- Top Repeated Values:")
+                    for val, count in list(olt_repeated.items())[:3]:
+                        st.write(f"  - {val}: {count} times")
+        
+        # Analyze status columns
+        status_mappings = ['SITE STATUS', 'SCOPE STATUS']
+        for field in status_mappings:
+            if field in header_mapping:
+                mapping = header_mapping[field]
+                master_header = mapping['master_col']
+                olt_header = mapping['olt_col']
+                
+                master_col = None
+                olt_col = None
+                
+                for col in master_df.columns:
+                    if clean_string_normalization(col) == clean_string_normalization(master_header):
+                        master_col = col
+                        break
+                
+                for col in olt_df.columns:
+                    if clean_string_normalization(col) == clean_string_normalization(olt_header):
+                        olt_col = col
+                        break
+                
+                if master_col and olt_col:
+                    st.write(f"\n**{field} Pattern Analysis:**")
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        master_pattern, master_repeated, _ = analyze_data_patterns(master_df[master_col])
+                        st.write(f"Master: {master_pattern['pattern_type']}")
+                        if master_repeated:
+                            st.write("Top values:", ', '.join([f"{k}({v})" for k, v in list(master_repeated.items())[:3]]))
+                    
+                    with col2:
+                        olt_pattern, olt_repeated, _ = analyze_data_patterns(olt_df[olt_col])
+                        st.write(f"OLT: {olt_pattern['pattern_type']}")
+                        if olt_repeated:
+                            st.write("Top values:", ', '.join([f"{k}({v})" for k, v in list(olt_repeated.items())[:3]]))
     
     # Show warnings for missing or mismatched mappings
     issues = mapping_df[
@@ -679,7 +903,7 @@ if master_file and olt_file:
     st.write("### ✅ Confirm Mappings")
     
     if mapping_verified:
-        st.success("✅ All column mappings are verified by data category!")
+        st.success("✅ All column mappings are verified!")
     else:
         st.warning("⚠️ Some mappings have issues. Please review and fix them above.")
     
@@ -781,22 +1005,35 @@ if master_file and olt_file:
                         matched_master_col = clean_m_col
                         formatting_func = mapping.get('format', None)
                         
-                        # Verify data category match
+                        # Comprehensive verification
                         master_category, master_confidence, _ = detect_data_category(master_df[matched_master_col])
                         olt_category, olt_confidence, _ = detect_data_category(olt_df[olt_col])
-                        is_match, match_conf, match_desc = verify_category_match(
+                        is_cat_match, cat_conf, cat_desc = verify_category_match(
                             master_category, master_confidence,
                             olt_category, olt_confidence
                         )
                         
-                        match_confidence = match_conf
-                        if is_match:
-                            verification_note = f"✅ Category: {master_category} ↔ {olt_category} ({match_conf})"
-                            if mapping.get('required', False) and match_conf in ['Low', 'None']:
-                                mapping_issues.append(f"⚠️ Required field '{field}' has low category match confidence ({match_conf})")
+                        similarity_score, is_similar, details, common_values, pattern_match = verify_data_similarity_with_patterns(
+                            master_df[matched_master_col],
+                            olt_df[olt_col]
+                        )
+                        
+                        if is_cat_match and is_similar and pattern_match:
+                            match_confidence = "High"
+                            verification_note = f"✅ Category: {master_category} ↔ {olt_category}, Similarity: {similarity_score:.1%}, Pattern: Match"
+                        elif is_cat_match and (is_similar or pattern_match):
+                            match_confidence = "Medium"
+                            verification_note = f"✅ Category: {master_category} ↔ {olt_category}, Similarity: {similarity_score:.1%}"
+                        elif is_cat_match:
+                            match_confidence = "Low"
+                            verification_note = f"⚠️ Category: {master_category} ↔ {olt_category}, Data patterns differ (Sim: {similarity_score:.1%})"
+                            if mapping.get('required', False):
+                                mapping_issues.append(f"⚠️ Required field '{field}' has low data similarity ({similarity_score:.1%})")
                         else:
+                            match_confidence = "None"
                             verification_note = f"⚠️ Category mismatch: {master_category} ↔ {olt_category}"
-                            mapping_issues.append(f"⚠️ Field '{field}' category mismatch between files")
+                            if mapping.get('required', False):
+                                mapping_issues.append(f"⚠️ Required field '{field}' has category mismatch")
                         
                         break
                 if matched_master_col:
@@ -810,10 +1047,11 @@ if master_file and olt_file:
                     })
                 break
         
-        # If not in mapping, try to match by column name with category verification
+        # If not in mapping, try to match by column name with comprehensive verification
         if not matched_master_col:
             best_match = None
             best_score = 0
+            best_details = {}
             
             for clean_m_col in master_df.columns:
                 # Check name similarity
@@ -824,38 +1062,43 @@ if master_file and olt_file:
                 
                 # Check partial match
                 if clean_olt_name in clean_string_normalization(clean_m_col) or clean_string_normalization(clean_m_col) in clean_olt_name:
-                    # Verify data category for this potential match
+                    # Verify data category and similarity
                     master_category, master_confidence, _ = detect_data_category(master_df[clean_m_col])
                     olt_category, olt_confidence, _ = detect_data_category(olt_df[olt_col])
-                    is_match, match_conf, _ = verify_category_match(
+                    is_cat_match, _, _ = verify_category_match(
                         master_category, master_confidence,
                         olt_category, olt_confidence
                     )
                     
-                    if is_match:
-                        score = (master_confidence + olt_confidence) / 2
-                        if score > best_score:
-                            best_score = score
+                    if is_cat_match:
+                        similarity_score, is_similar, details, _, _ = verify_data_similarity_with_patterns(
+                            master_df[clean_m_col],
+                            olt_df[olt_col]
+                        )
+                        
+                        if similarity_score > best_score:
+                            best_score = similarity_score
                             best_match = clean_m_col
+                            best_details = details
             
             if best_match and best_score > 0.4:
                 matched_master_col = best_match
                 match_confidence = "High" if best_score > 0.8 else "Medium" if best_score > 0.6 else "Low"
-                verification_note = f"🔀 Auto-matched by category (Score: {best_score:.0%})"
+                verification_note = f"🔀 Auto-matched by category & data patterns (Score: {best_score:.1%})"
                 mapped_columns_log.append({
                     'olt_col': olt_col,
                     'master_col': matched_master_col,
                     'field': 'Auto-matched',
                     'confidence': match_confidence,
                     'verification': verification_note,
-                    'description': 'Auto-detected by name & data category'
+                    'description': 'Auto-detected by name, category & data patterns'
                 })
         
         # Handle the PLAID column specially
         if clean_olt_name == clean_string_normalization('PLAID'):
             matched_master_col = master_plaid_col_clean
             match_confidence = "High"
-            verification_note = "🔑 Key identifier verified by category"
+            verification_note = "🔑 Key identifier verified"
             mapped_columns_log.append({
                 'olt_col': olt_col,
                 'master_col': matched_master_col,
@@ -886,7 +1129,7 @@ if master_file and olt_file:
     
     # Display mapping warnings
     if mapping_issues:
-        st.warning("⚠️ Data Category Verification Issues Found")
+        st.warning("⚠️ Data Verification Issues Found")
         for issue in mapping_issues:
             st.write(f"- {issue}")
     
