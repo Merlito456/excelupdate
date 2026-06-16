@@ -461,21 +461,31 @@ if master_file and olt_file:
     olt_df.columns = olt_df_cleaned.columns
 
     # -----------------------------
-    # 📊 Header Mapping with Data Validation
+    # 📊 Header Mapping with User Verification
     # -----------------------------
-    st.subheader("🔍 Header Mapping with Data Validation")
-    
+    st.subheader("🔍 Header Mapping Verification")
+    st.info("Please review the column mappings between your Master Tracker and OLT Tracker files. Verify that the correct columns are matched before proceeding.")
+
     # Get mapping configuration
     header_mapping = get_header_mapping()
     
-    # Perform data validation for each mapping
-    validation_results = []
+    # Create interactive mapping verification
+    st.write("### 📋 Verify Column Mappings")
+    
+    # Initialize session state for mapping verification
+    if 'mapping_confirmed' not in st.session_state:
+        st.session_state.mapping_confirmed = False
+        st.session_state.manual_mappings = {}
+    
+    # Display current mappings with verification options
+    mapping_verified = True
+    mapping_df_data = []
     
     for field, mapping in header_mapping.items():
         master_header = mapping['master_col']
         olt_header = mapping['olt_col']
         
-        # Find actual columns in cleaned dataframes
+        # Find actual columns
         master_col = None
         olt_col = None
         
@@ -489,50 +499,52 @@ if master_file and olt_file:
                 olt_col = col
                 break
         
-        result = {
-            'Field': field,
-            'Master Header': master_header,
-            'OLT Header': olt_header,
-            'Master Found': master_col is not None,
-            'OLT Found': olt_col is not None,
-            'Status': '❌ Missing',
-            'Data Match': 'N/A',
-            'Match Score': 0,
-            'Master Sample': '',
-            'OLT Sample': '',
-            'Common Values': ''
-        }
+        # Check if user has manually overridden this mapping
+        mapping_key = f"{field}_{master_header}_{olt_header}"
+        if mapping_key in st.session_state.manual_mappings:
+            manual_master = st.session_state.manual_mappings[mapping_key].get('master')
+            manual_olt = st.session_state.manual_mappings[mapping_key].get('olt')
+            if manual_master:
+                master_col = manual_master
+            if manual_olt:
+                olt_col = manual_olt
         
-        if master_col is not None and olt_col is not None:
-            # Validate data in both columns
+        # Get data samples for verification
+        master_sample = ""
+        olt_sample = ""
+        data_match_status = "⚠️ Not Verified"
+        
+        if master_col and olt_col:
             master_series = master_df[master_col]
             olt_series = olt_df[olt_col]
             
-            # Check data types
-            master_valid, master_sample, master_type = validate_data_type(master_series, mapping['type'])
-            olt_valid, olt_sample, olt_type = validate_data_type(olt_series, mapping['type'])
+            # Get samples
+            master_sample = ', '.join(master_series.dropna().astype(str).head(3).tolist()) if len(master_series) > 0 else ""
+            olt_sample = ', '.join(olt_series.dropna().astype(str).head(3).tolist()) if len(olt_series) > 0 else ""
             
             # Verify data similarity
             similarity_score, is_similar, common_values = verify_data_similarity(master_series, olt_series)
-            
-            result['Status'] = '✅ Matched' if is_similar else '⚠️ Check Data'
-            result['Data Match'] = f"{master_type} ↔ {olt_type}"
-            result['Match Score'] = f"{similarity_score:.2%}"
-            result['Master Sample'] = ', '.join(master_sample[:3]) if master_sample else ''
-            result['OLT Sample'] = ', '.join(olt_sample[:3]) if olt_sample else ''
-            result['Common Values'] = ', '.join(common_values[:3]) if common_values else ''
-        elif master_col is not None:
-            result['Status'] = '⚠️ Master Only'
-        elif olt_col is not None:
-            result['Status'] = '⚠️ OLT Only'
+            data_match_status = f"✅ Similar ({similarity_score:.1%})" if is_similar else f"⚠️ Low similarity ({similarity_score:.1%})"
         
-        validation_results.append(result)
+        mapping_df_data.append({
+            'Field': field,
+            'Description': mapping['description'],
+            'Required': '✅' if mapping.get('required', False) else '',
+            'Master Column': master_col or '❌ NOT FOUND',
+            'OLT Column': olt_col or '❌ NOT FOUND',
+            'Data Match': data_match_status,
+            'Master Sample': master_sample[:50],
+            'OLT Sample': olt_sample[:50]
+        })
+        
+        if not master_col or not olt_col:
+            mapping_verified = False
     
-    # Display validation results
-    validation_df = pd.DataFrame(validation_results)
+    # Display mapping table
+    mapping_df = pd.DataFrame(mapping_df_data)
     
-    # Color coding for status using map
-    def color_status(val):
+    # Color coding function
+    def color_mapping_status(val):
         if '✅' in str(val):
             return 'background-color: #90EE90'
         elif '⚠️' in str(val):
@@ -541,26 +553,90 @@ if master_file and olt_file:
             return 'background-color: #FF6B6B'
         return ''
     
-    # Apply styling using map
-    styled_validation = validation_df.style.map(color_status, subset=['Status'])
-    st.dataframe(styled_validation, use_container_width=True)
+    styled_mapping = mapping_df.style.map(color_mapping_status, subset=['Data Match', 'Master Column', 'OLT Column'])
+    st.dataframe(styled_mapping, use_container_width=True)
     
-    # Show detailed validation warnings
-    warnings = validation_df[validation_df['Status'].str.contains('⚠️|❌', na=False)]
-    if len(warnings) > 0:
-        st.warning(f"⚠️ Found {len(warnings)} columns with potential mapping issues. Please review the data samples above.")
+    # Show warnings for missing mappings
+    missing_mappings = mapping_df[mapping_df['Master Column'].str.contains('NOT FOUND', na=False) | 
+                                   mapping_df['OLT Column'].str.contains('NOT FOUND', na=False)]
+    
+    if len(missing_mappings) > 0:
+        st.warning(f"⚠️ Found {len(missing_mappings)} fields with missing column mappings. Please fix these before proceeding.")
+        st.dataframe(missing_mappings[['Field', 'Description', 'Master Column', 'OLT Column']], use_container_width=True)
+    
+    # Manual mapping override section
+    with st.expander("🛠️ Manual Mapping Override (Advanced)"):
+        st.write("If automatic mapping is incorrect, you can manually select the correct columns below:")
         
-        with st.expander("📋 View Data Sample Comparison"):
-            for idx, row in warnings.iterrows():
-                st.write(f"**{row['Field']}**")
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write(f"Master Sample: {row['Master Sample']}")
-                with col2:
-                    st.write(f"OLT Sample: {row['OLT Sample']}")
-                if row['Common Values']:
-                    st.write(f"Common values: {row['Common Values']}")
-                st.write("---")
+        # Get all available columns
+        master_columns = list(master_df.columns)
+        olt_columns = list(olt_df.columns)
+        
+        # For each field that needs verification, provide dropdowns
+        for field, mapping in header_mapping.items():
+            # Find current mapping
+            current_master = None
+            current_olt = None
+            
+            for col in master_df.columns:
+                if clean_string_normalization(col) == clean_string_normalization(mapping['master_col']):
+                    current_master = col
+                    break
+            
+            for col in olt_df.columns:
+                if clean_string_normalization(col) == clean_string_normalization(mapping['olt_col']):
+                    current_olt = col
+                    break
+            
+            col1, col2, col3 = st.columns([2, 2, 1])
+            with col1:
+                selected_master = st.selectbox(
+                    f"Master column for '{field}'",
+                    options=['None'] + master_columns,
+                    index=0 if current_master is None else master_columns.index(current_master) + 1,
+                    key=f"manual_master_{field}"
+                )
+            with col2:
+                selected_olt = st.selectbox(
+                    f"OLT column for '{field}'",
+                    options=['None'] + olt_columns,
+                    index=0 if current_olt is None else olt_columns.index(current_olt) + 1,
+                    key=f"manual_olt_{field}"
+                )
+            with col3:
+                if selected_master != 'None' or selected_olt != 'None':
+                    mapping_key = f"{field}_{mapping['master_col']}_{mapping['olt_col']}"
+                    st.session_state.manual_mappings[mapping_key] = {
+                        'master': selected_master if selected_master != 'None' else None,
+                        'olt': selected_olt if selected_olt != 'None' else None
+                    }
+                    st.success("✅ Set")
+                else:
+                    st.write("Default")
+            st.write("---")
+    
+    # Verification confirmation
+    st.write("### ✅ Confirm Mappings")
+    
+    if mapping_verified:
+        st.success("✅ All required columns are mapped correctly!")
+    else:
+        st.warning("⚠️ Some required columns are missing. Please fix the mappings above.")
+    
+    # User confirmation checkbox
+    confirm_mapping = st.checkbox(
+        "I have reviewed and verified all column mappings above",
+        value=st.session_state.mapping_confirmed,
+        key="confirm_mapping_checkbox"
+    )
+    
+    if confirm_mapping:
+        st.session_state.mapping_confirmed = True
+        st.success("✅ Mapping verified! Proceeding with data processing...")
+    else:
+        st.info("Please verify the column mappings before proceeding.")
+        # Stop here if not confirmed
+        st.stop()
 
     # -----------------------------
     # 📊 All Entries with Duplicate Highlighting
@@ -612,7 +688,7 @@ if master_file and olt_file:
     st.subheader("🔄 Automated Column Mapping with Data Verification")
     
     # Create append DataFrame with OLT columns
-    append_df = pd.DataFrame(columns=olt_df.columns)  # Use cleaned column names
+    append_df = pd.DataFrame(columns=olt_df.columns)
     mapped_columns_log = []
     mapping_issues = []
     
