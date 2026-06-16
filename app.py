@@ -7,9 +7,9 @@ from datetime import datetime
 import re
 from collections import Counter
 
-st.set_page_config(page_title="OLT Tracker Tool", layout="wide")
+st.set_page_config(page_title="Master Enrichment Tool", layout="wide")
 
-st.title("📊 Master Tracker → Nokia OLT Rollout Tool")
+st.title("📊 Master Tracker Enrichment Tool")
 
 # -----------------------------
 # ✅ Core Helper Functions
@@ -139,87 +139,6 @@ def analyze_column_population(df):
         })
     
     return pd.DataFrame(results)
-
-def suggest_column_mappings(master_population_df, olt_population_df, header_mapping):
-    """
-    Suggests mappings based on population patterns and column names
-    """
-    suggestions = []
-    
-    # Get populated columns from both files
-    master_populated = master_population_df[master_population_df['Population %'].str.rstrip('%').astype(float) > 10]['Column'].tolist()
-    olt_populated = olt_population_df[olt_population_df['Population %'].str.rstrip('%').astype(float) > 10]['Column'].tolist()
-    
-    # For each mapping, check if columns are populated
-    for field, mapping in header_mapping.items():
-        master_col = mapping['master_col']
-        olt_col = mapping['olt_col']
-        
-        # Find actual column names
-        master_actual = None
-        olt_actual = None
-        
-        for col in master_population_df['Column']:
-            if clean_string_normalization(col) == clean_string_normalization(master_col):
-                master_actual = col
-                break
-        
-        for col in olt_population_df['Column']:
-            if clean_string_normalization(col) == clean_string_normalization(olt_col):
-                olt_actual = col
-                break
-        
-        # Get population status
-        master_pop = master_population_df[master_population_df['Column'] == master_actual]['Population %'].values[0] if master_actual else "0.0%"
-        olt_pop = olt_population_df[olt_population_df['Column'] == olt_actual]['Population %'].values[0] if olt_actual else "0.0%"
-        
-        # Suggest alternative mappings if columns are empty
-        suggestion = {
-            'Field': field,
-            'Description': mapping['description'],
-            'Master Expected': master_actual or master_col,
-            'Master Population': master_pop if master_actual else "❌ Not Found",
-            'OLT Expected': olt_actual or olt_col,
-            'OLT Population': olt_pop if olt_actual else "❌ Not Found",
-            'Issue': None,
-            'Suggestion': None
-        }
-        
-        # Check for population issues
-        if master_actual and float(master_pop.rstrip('%')) < 5:
-            suggestion['Issue'] = "Master column has very few populated values"
-            suggestion['Suggestion'] = "Check if this is the correct column"
-        
-        if olt_actual and float(olt_pop.rstrip('%')) < 5:
-            suggestion['Issue'] = "OLT column has very few populated values"
-            suggestion['Suggestion'] = "Check if this is the correct column"
-        
-        # Check if expected columns don't exist
-        if not master_actual:
-            suggestion['Issue'] = f"Expected master column '{master_col}' not found"
-            # Suggest alternative from populated columns
-            for pop_col in master_populated:
-                if clean_string_normalization(field) in clean_string_normalization(pop_col):
-                    suggestion['Suggestion'] = f"Consider using '{pop_col}' instead"
-                    break
-                elif any(keyword in clean_string_normalization(pop_col) for keyword in ['name', 'site', 'location', 'code']):
-                    if not suggestion['Suggestion']:
-                        suggestion['Suggestion'] = f"Suggested alternative: '{pop_col}'"
-        
-        if not olt_actual:
-            suggestion['Issue'] = f"Expected OLT column '{olt_col}' not found"
-            for pop_col in olt_populated:
-                if clean_string_normalization(field) in clean_string_normalization(pop_col):
-                    suggestion['Suggestion'] = f"Consider using '{pop_col}' instead"
-                    break
-                elif any(keyword in clean_string_normalization(pop_col) for keyword in ['name', 'site', 'location', 'code']):
-                    if not suggestion['Suggestion']:
-                        suggestion['Suggestion'] = f"Suggested alternative: '{pop_col}'"
-        
-        if suggestion['Issue'] or suggestion['Suggestion']:
-            suggestions.append(suggestion)
-    
-    return pd.DataFrame(suggestions)
 
 # -----------------------------
 # 📊 DATA CATEGORY DETECTION FUNCTIONS
@@ -623,23 +542,23 @@ def header_inspection_ui(df, df_name, key_prefix):
     return st.session_state[rename_key]
 
 # -----------------------------
-# 📊 HEADER MAPPING WITH COMPREHENSIVE VERIFICATION
+# 📊 HEADER MAPPING FOR ENRICHMENT
 # -----------------------------
 
-def get_header_mapping():
+def get_enrichment_mapping():
     """
-    Defines the accurate mapping between Master Tracker and Nokia OLT Tracker headers
-    Based on: Master Tracker Luzon_v3 - 02MARCH2026.xlsx and Nokia OLT Tracker v4.xlsx
+    Defines the mapping between Master Tracker and Nokia OLT Tracker headers for enrichment
+    This maps OLT columns to Master columns for data enrichment
     """
     
     mapping = {
-        # Core Identifiers
+        # Core Identifiers - PLAID is the key
         'PLAID': {
             'master_col': 'PLAID',
             'olt_col': 'PLAID',
             'type': 'key',
-            'description': 'Primary Key Identifier',
-            'required': True
+            'description': 'Primary Key Identifier - Used to match records',
+            'is_key': True
         },
         
         # Site Information
@@ -647,39 +566,21 @@ def get_header_mapping():
             'master_col': 'SITE NAME',
             'olt_col': 'SITE NAME',
             'type': 'text',
-            'description': 'Site Name',
-            'required': True
-        },
-        'SITE CODE': {
-            'master_col': 'SITECODE',
-            'olt_col': 'SITE CODE',
-            'type': 'text',
-            'description': 'Site Code',
-            'required': False
+            'description': 'Site Name from OLT'
         },
         
         # Project Information
-        'BUILD YEAR': {
-            'master_col': 'BUILD YEAR',
-            'olt_col': 'BUILD YEAR',
-            'type': 'date_text',
-            'description': 'Build Year (formatted as "YYYY build")',
-            'format': lambda x: f"{str(x).split('.')[0].strip()} build" if pd.notna(x) and str(x).strip() != "" and str(x).lower() != "nan" else "",
-            'required': True
-        },
-        'PROJECT': {
+        'PROJECT TAGGING': {
             'master_col': 'PROJECT',
             'olt_col': 'PROJECT TAGGING',
             'type': 'text',
-            'description': 'Project Tagging',
-            'required': True
+            'description': 'Project Tagging from OLT'
         },
         'PROJECT TYPE': {
             'master_col': 'OLT SCOPE',
             'olt_col': 'PROJECT TYPE',
             'type': 'text',
-            'description': 'Project Type (from OLT Scope)',
-            'required': True
+            'description': 'Project Type from OLT'
         },
         
         # Location Information
@@ -687,38 +588,36 @@ def get_header_mapping():
             'master_col': 'CLUSTER',
             'olt_col': 'CLUSTERING',
             'type': 'text',
-            'description': 'Clustering/Cluster',
-            'required': True
+            'description': 'Clustering/Cluster from OLT'
         },
         'PROVINCE': {
             'master_col': 'PROVINCE',
             'olt_col': 'PROVINCE',
             'type': 'text',
-            'description': 'Province',
-            'required': True
+            'description': 'Province from OLT'
         },
         'REGION': {
             'master_col': 'REGION',
             'olt_col': 'REGION',
             'type': 'text',
-            'description': 'Region',
-            'required': False
+            'description': 'Region from OLT'
         },
         
-        # Equipment & Classification
+        # Year Information
+        'BUILD YEAR': {
+            'master_col': 'BUILD YEAR',
+            'olt_col': 'BUILD YEAR',
+            'type': 'date_text',
+            'description': 'Build Year from OLT',
+            'format': lambda x: f"{str(x).split('.')[0].strip()} build" if pd.notna(x) and str(x).strip() != "" and str(x).lower() != "nan" else ""
+        },
+        
+        # Equipment
         'EQUIPMENT TYPE': {
             'master_col': 'ELECTRONICS EQUIPMENT',
             'olt_col': 'EQUIPMENT TYPE',
             'type': 'text',
-            'description': 'Equipment Type (from Electronics Equipment)',
-            'required': True
-        },
-        'SITE CLASSIFICATION': {
-            'master_col': 'SITE CLASSIFICATION',
-            'olt_col': 'SITE CLASSIFICATION',
-            'type': 'text',
-            'description': 'Site Classification',
-            'required': False
+            'description': 'Equipment Type from OLT'
         },
         
         # Status Fields
@@ -726,15 +625,13 @@ def get_header_mapping():
             'master_col': 'SITE STATUS',
             'olt_col': 'SITE STATUS',
             'type': 'text',
-            'description': 'Site Status',
-            'required': True
+            'description': 'Site Status from OLT'
         },
         'SCOPE STATUS': {
             'master_col': 'SCOPE STATUS',
             'olt_col': 'SCOPE STATUS',
             'type': 'text',
-            'description': 'Scope Status',
-            'required': False
+            'description': 'Scope Status from OLT'
         },
         
         # Milestone Dates
@@ -742,57 +639,50 @@ def get_header_mapping():
             'master_col': 'SURVEY DATE',
             'olt_col': 'SITE SURVEY ACTUAL DATE',
             'type': 'date',
-            'description': 'Site Survey Actual Date',
-            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else "",
-            'required': False
+            'description': 'Survey Date from OLT',
+            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         'INSTALLED DATE': {
             'master_col': 'INSTALLED DATE',
             'olt_col': 'INSTALLATION DONE ACTUAL DATE',
             'type': 'date',
-            'description': 'Installation Done Actual Date',
-            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else "",
-            'required': False
+            'description': 'Installation Date from OLT',
+            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         'POWER TAPPED DATE': {
             'master_col': 'POWER TAPPED DATE',
             'olt_col': 'POWER TAPPING DONE ACTUAL DATE',
             'type': 'date',
-            'description': 'Power Tapping Done Actual Date',
-            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else "",
-            'required': False
+            'description': 'Power Tapped Date from OLT',
+            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         'INTEGRATED DATE': {
             'master_col': 'INTEGRATED DATE',
             'olt_col': 'INTEGRATION DONE ACTUAL DATE',
             'type': 'date',
-            'description': 'Integration Done Actual Date',
-            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else "",
-            'required': False
+            'description': 'Integration Date from OLT',
+            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         'PAT DATE': {
             'master_col': 'PAT DATE',
             'olt_col': 'PAT DONE ACTUAL DATE',
             'type': 'date',
-            'description': 'PAT Done Actual Date',
-            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else "",
-            'required': False
+            'description': 'PAT Date from OLT',
+            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         'PAC DATE': {
             'master_col': "PAC'ED",
             'olt_col': 'PAC APPROVAL DONE ACTUAL DATE',
             'type': 'date',
-            'description': 'PAC Approval Done Actual Date',
-            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else "",
-            'required': False
+            'description': 'PAC Date from OLT',
+            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         'FAC DATE': {
             'master_col': "FAC'ED",
             'olt_col': 'FAC APPROVAL DONE ACTUAL DATE',
             'type': 'date',
-            'description': 'FAC Approval Done Actual Date',
-            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else "",
-            'required': False
+            'description': 'FAC Date from OLT',
+            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         
         # Additional Fields
@@ -800,24 +690,21 @@ def get_header_mapping():
             'master_col': 'HANDOVER DATE',
             'olt_col': 'HANDOVER DATE',
             'type': 'date',
-            'description': 'Handover Date',
-            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else "",
-            'required': False
+            'description': 'Handover Date from OLT',
+            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         'TARGET DATE': {
             'master_col': 'TARGET DATE',
             'olt_col': 'TARGET DATE',
             'type': 'date',
-            'description': 'Target Date',
-            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else "",
-            'required': False
+            'description': 'Target Date from OLT',
+            'format': lambda x: str(x).split(" ")[0] if pd.notna(x) and str(x).lower() != "nan" else ""
         },
         'REMARKS': {
             'master_col': 'REMARKS',
             'olt_col': 'REMARKS',
             'type': 'text',
-            'description': 'Remarks',
-            'required': False
+            'description': 'Remarks from OLT'
         }
     }
     
@@ -893,7 +780,7 @@ if master_file and olt_file:
     olt_df.columns = olt_df_cleaned.columns
 
     # -----------------------------
-    # 📊 DATA QUALITY ANALYSIS - FIRST
+    # 📊 DATA QUALITY ANALYSIS
     # -----------------------------
     st.subheader("📊 Data Quality & Population Analysis")
     st.info("This analysis shows which columns have data and which are empty. This helps identify the correct columns to map.")
@@ -910,25 +797,12 @@ if master_file and olt_file:
     with col2:
         st.write("**📋 OLT Tracker - Column Population**")
         st.dataframe(olt_pop_df, use_container_width=True)
-    
-    # Get mapping configuration
-    header_mapping = get_header_mapping()
-    
-    # Suggest mappings based on population
-    suggestions_df = suggest_column_mappings(master_pop_df, olt_pop_df, header_mapping)
-    
-    if len(suggestions_df) > 0:
-        st.subheader("💡 Column Mapping Suggestions")
-        st.info("Based on column population analysis, here are some suggestions for mapping issues:")
-        st.dataframe(suggestions_df, use_container_width=True)
-    else:
-        st.success("✅ All expected columns appear to be properly mapped with good data population!")
 
     # -----------------------------
     # 📊 HEADER INSPECTION AND RENAMING
     # -----------------------------
     st.subheader("🔍 Header Inspection and Renaming")
-    st.info("Inspect the data in each column and rename headers if needed. This helps ensure accurate column mapping.")
+    st.info("Inspect the data in each column and rename headers if needed.")
     
     # Create tabs for Master and OLT header inspection
     tab1, tab2 = st.tabs(["📋 Master Tracker Headers", "📋 OLT Tracker Headers"])
@@ -953,20 +827,10 @@ if master_file and olt_file:
                 new_olt_columns.append(new_name)
             olt_df.columns = new_olt_columns
     
-    # Show updated column lists
-    st.write("### 📊 Updated Column Lists")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("**Master Tracker Columns:**")
-        st.write(", ".join(master_df.columns.tolist()))
-    with col2:
-        st.write("**OLT Tracker Columns:**")
-        st.write(", ".join(olt_df.columns.tolist()))
-    
     # Confirm after inspection
     st.write("### ✅ Confirm After Header Inspection")
     confirm_inspection = st.checkbox(
-        "I have inspected and renamed headers as needed. Proceed to mapping verification.",
+        "I have inspected and renamed headers as needed. Proceed to enrichment.",
         key="confirm_inspection"
     )
     
@@ -975,633 +839,185 @@ if master_file and olt_file:
         st.stop()
 
     # -----------------------------
-    # 📊 Header Mapping with Comprehensive Verification
+    # 📊 ENRICH MASTER WITH OLT DATA
     # -----------------------------
-    st.subheader("🔍 Comprehensive Column Mapping Verification")
-    st.info("This tool verifies column mappings using:")
-    st.info("1. **Data Category/Type** - What kind of data is in the column")
-    st.info("2. **Data Pattern Analysis** - Uniqueness and repetition patterns")
-    st.info("3. **Actual Data Similarity** - Overlap in actual values")
-
-    # Create interactive mapping verification
-    st.write("### 📋 Comprehensive Column Mapping Verification")
+    st.subheader("🔄 Enrich Master Data with OLT Information")
+    st.info("This will create a new enriched Master file by adding data from the OLT tracker.")
     
-    # Initialize session state for mapping verification
-    if 'mapping_confirmed' not in st.session_state:
-        st.session_state.mapping_confirmed = False
-        st.session_state.manual_mappings = {}
+    # Get enrichment mapping
+    enrichment_mapping = get_enrichment_mapping()
     
-    # Display current mappings with comprehensive verification
-    mapping_verified = True
-    mapping_df_data = []
+    # Display the mapping being used
+    st.write("### 📋 Enrichment Mapping")
+    mapping_display = []
+    for field, mapping in enrichment_mapping.items():
+        mapping_display.append({
+            'Field': field,
+            'Master Column': mapping['master_col'],
+            'OLT Column': mapping['olt_col'],
+            'Description': mapping['description'],
+            'Is Key': '✅' if mapping.get('is_key', False) else ''
+        })
+    st.dataframe(pd.DataFrame(mapping_display), use_container_width=True)
     
-    for field, mapping in header_mapping.items():
-        master_header = mapping['master_col']
-        olt_header = mapping['olt_col']
+    # Create enriched dataframe - start with a copy of master
+    enriched_df = master_df.copy()
+    
+    # Track enrichment results
+    enrichment_results = []
+    enriched_columns = []
+    
+    # Get PLAID column for matching
+    master_plaid_col = master_plaid_col_clean
+    olt_plaid_col = olt_plaid_col_clean
+    
+    # Create a lookup dictionary for OLT data
+    olt_lookup = {}
+    for idx, row in olt_df.iterrows():
+        plaid_val = str(row[olt_plaid_col]).strip()
+        if plaid_val and plaid_val != 'nan' and plaid_val != '':
+            olt_lookup[plaid_val] = row
+    
+    # Process each field in the mapping
+    for field, mapping in enrichment_mapping.items():
+        if mapping.get('is_key', False):
+            continue  # Skip the key field
         
-        # Find actual columns (using current renamed columns)
-        master_col = None
-        olt_col = None
+        master_col = mapping['master_col']
+        olt_col = mapping['olt_col']
+        
+        # Find actual columns
+        actual_master_col = None
+        actual_olt_col = None
         
         for col in master_df.columns:
-            if clean_string_normalization(col) == clean_string_normalization(master_header):
-                master_col = col
+            if clean_string_normalization(col) == clean_string_normalization(master_col):
+                actual_master_col = col
                 break
         
         for col in olt_df.columns:
-            if clean_string_normalization(col) == clean_string_normalization(olt_header):
-                olt_col = col
+            if clean_string_normalization(col) == clean_string_normalization(olt_col):
+                actual_olt_col = col
                 break
         
-        # Check if user has manually overridden this mapping
-        mapping_key = f"{field}_{master_header}_{olt_header}"
-        if mapping_key in st.session_state.manual_mappings:
-            manual_master = st.session_state.manual_mappings[mapping_key].get('master')
-            manual_olt = st.session_state.manual_mappings[mapping_key].get('olt')
-            if manual_master:
-                master_col = manual_master
-            if manual_olt:
-                olt_col = manual_olt
-        
-        # Get comprehensive verification
-        master_category = "N/A"
-        master_confidence = 0
-        olt_category = "N/A"
-        olt_confidence = 0
-        master_samples = []
-        olt_samples = []
-        pattern_match = False
-        similarity_score = 0
-        is_similar = False
-        details = {}
-        common_values = []
-        category_match = "❌ Not Found"
-        match_confidence = "None"
-        match_description = ""
-        
-        if master_col:
-            master_category, master_confidence, master_samples = detect_data_category(master_df[master_col])
-        
-        if olt_col:
-            olt_category, olt_confidence, olt_samples = detect_data_category(olt_df[olt_col])
-        
-        if master_col and olt_col:
-            # Category verification
-            is_cat_match, cat_conf, cat_desc = verify_category_match(
-                master_category, master_confidence,
-                olt_category, olt_confidence
-            )
+        if actual_master_col and actual_olt_col:
+            # Create new column name for OLT data
+            new_col_name = f"{actual_master_col}_from_OLT"
             
-            # Data similarity with pattern analysis
-            similarity_score, is_similar, details, common_values, pattern_match = verify_data_similarity_with_patterns(
-                master_df[master_col],
-                olt_df[olt_col]
-            )
+            # Enrich the data
+            enriched_values = []
+            matched_count = 0
+            total_rows = len(enriched_df)
             
-            # Combined verification
-            if is_cat_match and is_similar and pattern_match:
-                category_match = "✅ All Good"
-                match_confidence = "High"
-                match_description = f"Category: {cat_desc}, Similarity: {similarity_score:.1%}"
-            elif is_cat_match and (is_similar or pattern_match):
-                category_match = "✅ Acceptable"
-                match_confidence = "Medium"
-                match_description = f"Category: {cat_desc}, Similarity: {similarity_score:.1%}"
-            elif is_cat_match:
-                category_match = "⚠️ Category OK, Data mismatch"
-                match_confidence = "Low"
-                match_description = f"Category matches but data patterns differ (Sim: {similarity_score:.1%})"
-                mapping_verified = False
-            else:
-                category_match = "⚠️ Check Mapping"
-                match_confidence = "Low"
-                match_description = f"Category mismatch: {master_category} ↔ {olt_category}"
-                mapping_verified = False
-        elif master_col:
-            category_match = "⚠️ Master Only"
-            mapping_verified = False
-        elif olt_col:
-            category_match = "⚠️ OLT Only"
-            mapping_verified = False
-        else:
-            category_match = "❌ Both Missing"
-            mapping_verified = False
+            for idx, row in enriched_df.iterrows():
+                plaid_val = str(row[master_plaid_col]).strip()
+                if plaid_val in olt_lookup:
+                    olt_row = olt_lookup[plaid_val]
+                    olt_value = olt_row[actual_olt_col]
+                    # Apply formatting if defined
+                    if mapping.get('format'):
+                        olt_value = mapping['format'](olt_value)
+                    enriched_values.append(olt_value)
+                    matched_count += 1
+                else:
+                    # Keep original Master value if no OLT match
+                    enriched_values.append(row[actual_master_col])
+            
+            # Add the enriched column
+            enriched_df[new_col_name] = enriched_values
+            enriched_columns.append(new_col_name)
+            
+            # Track results
+            enrichment_results.append({
+                'Field': field,
+                'Master Column': actual_master_col,
+                'OLT Column': actual_olt_col,
+                'New Column': new_col_name,
+                'Rows Matched': matched_count,
+                'Match Rate': f"{(matched_count/total_rows*100):.1f}%"
+            })
+    
+    # Display enrichment results
+    if enrichment_results:
+        st.subheader("📊 Enrichment Results")
+        results_df = pd.DataFrame(enrichment_results)
+        st.dataframe(results_df, use_container_width=True)
         
-        mapping_df_data.append({
-            'Field': field,
-            'Description': mapping['description'],
-            'Required': '✅' if mapping.get('required', False) else '',
-            'Master Column': master_col or '❌ NOT FOUND',
-            'OLT Column': olt_col or '❌ NOT FOUND',
-            'Master Category': f"{master_category} ({master_confidence:.0%})" if master_col else 'N/A',
-            'OLT Category': f"{olt_category} ({olt_confidence:.0%})" if olt_col else 'N/A',
-            'Pattern Match': '✅' if pattern_match else '⚠️' if master_col and olt_col else 'N/A',
-            'Data Similarity': f"{similarity_score:.1%}" if master_col and olt_col else 'N/A',
-            'Common Values': ', '.join(common_values[:3]) if common_values else 'None',
-            'Category Match': category_match,
-            'Match Details': match_description if master_col and olt_col else ''
+        # Summary statistics
+        total_matches = sum([r['Rows Matched'] for r in enrichment_results])
+        total_possible = len(enriched_df) * len(enrichment_results)
+        st.info(f"✅ Enriched {len(enrichment_results)} columns with OLT data. Total matches: {total_matches:,} out of {total_possible:,} possible ({total_matches/total_possible*100:.1f}%)")
+    else:
+        st.warning("⚠️ No columns were enriched. Please check the mapping configuration.")
+    
+    # Show preview of enriched data
+    st.subheader("📊 Enriched Data Preview")
+    
+    # Select columns to show in preview
+    preview_cols = [master_plaid_col]
+    # Add some key master columns
+    for col in ['SITE NAME', 'PROJECT', 'REGION', 'PROVINCE']:
+        if col in enriched_df.columns:
+            preview_cols.append(col)
+    # Add enriched columns
+    preview_cols.extend(enriched_columns[:5])
+    
+    # Filter to available columns
+    available_preview = [col for col in preview_cols if col in enriched_df.columns]
+    
+    st.write(f"**Showing {len(available_preview)} columns, {len(enriched_df)} rows**")
+    st.dataframe(enriched_df[available_preview].head(20), use_container_width=True)
+    
+    # Show all columns
+    with st.expander("📋 View All Columns in Enriched File"):
+        st.write("**All columns in enriched file:**")
+        col_list = pd.DataFrame({
+            'Column Name': enriched_df.columns.tolist(),
+            'Type': [str(dtype) for dtype in enriched_df.dtypes],
+            'Non-Null Count': [enriched_df[col].count() for col in enriched_df.columns]
         })
+        st.dataframe(col_list, use_container_width=True)
+
+    # -----------------------------
+    # 💾 Download Enriched Master File
+    # -----------------------------
+    st.subheader("💾 Download Enriched Master File")
+    st.info(f"This will download an enriched version of the Master file with {len(enriched_columns)} additional columns from OLT.")
     
-    # Display mapping table
-    mapping_df = pd.DataFrame(mapping_df_data)
+    # Option to include or exclude OLT columns
+    include_olt = st.checkbox("Include OLT enriched columns in output", value=True)
     
-    # Color coding function
-    def color_mapping_status(val):
-        if '✅ All Good' in str(val):
-            return 'background-color: #90EE90'
-        elif '✅ Acceptable' in str(val):
-            return 'background-color: #98FB98'
-        elif '⚠️' in str(val):
-            return 'background-color: #FFD700'
-        elif '❌' in str(val):
-            return 'background-color: #FF6B6B'
-        return ''
-    
-    styled_mapping = mapping_df.style.map(color_mapping_status, subset=['Category Match'])
-    st.dataframe(styled_mapping, use_container_width=True)
-    
-    # Show data pattern analysis for critical columns
-    with st.expander("📊 Detailed Data Pattern Analysis"):
-        st.write("This shows the data patterns for each column, including uniqueness and repetition patterns.")
-        
-        # Analyze PLAID column
-        if master_plaid_col_clean and olt_plaid_col_clean:
-            st.write("**PLAID Column Pattern Analysis:**")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write("**Master PLAID Patterns:**")
-                master_pattern, master_repeated, master_unique = analyze_data_patterns(master_df[master_plaid_col_clean])
-                st.write(f"- Pattern Type: {master_pattern['pattern_type']}")
-                st.write(f"- Unique Values: {master_pattern['unique_values']}")
-                st.write(f"- Uniqueness Score: {master_pattern['uniqueness_score']:.1%}")
-                if master_repeated:
-                    st.write("- Top Repeated Values:")
-                    for val, count in list(master_repeated.items())[:3]:
-                        st.write(f"  - {val}: {count} times")
-            
-            with col2:
-                st.write("**OLT PLAID Patterns:**")
-                olt_pattern, olt_repeated, olt_unique = analyze_data_patterns(olt_df[olt_plaid_col_clean])
-                st.write(f"- Pattern Type: {olt_pattern['pattern_type']}")
-                st.write(f"- Unique Values: {olt_pattern['unique_values']}")
-                st.write(f"- Uniqueness Score: {olt_pattern['uniqueness_score']:.1%}")
-                if olt_repeated:
-                    st.write("- Top Repeated Values:")
-                    for val, count in list(olt_repeated.items())[:3]:
-                        st.write(f"  - {val}: {count} times")
-        
-        # Analyze status columns
-        status_mappings = ['SITE STATUS', 'SCOPE STATUS']
-        for field in status_mappings:
-            if field in header_mapping:
-                mapping = header_mapping[field]
-                master_header = mapping['master_col']
-                olt_header = mapping['olt_col']
-                
-                master_col = None
-                olt_col = None
-                
-                for col in master_df.columns:
-                    if clean_string_normalization(col) == clean_string_normalization(master_header):
-                        master_col = col
-                        break
-                
-                for col in olt_df.columns:
-                    if clean_string_normalization(col) == clean_string_normalization(olt_header):
-                        olt_col = col
-                        break
-                
-                if master_col and olt_col:
-                    st.write(f"\n**{field} Pattern Analysis:**")
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        master_pattern, master_repeated, _ = analyze_data_patterns(master_df[master_col])
-                        st.write(f"Master: {master_pattern['pattern_type']}")
-                        if master_repeated:
-                            st.write("Top values:", ', '.join([f"{k}({v})" for k, v in list(master_repeated.items())[:3]]))
-                    
-                    with col2:
-                        olt_pattern, olt_repeated, _ = analyze_data_patterns(olt_df[olt_col])
-                        st.write(f"OLT: {olt_pattern['pattern_type']}")
-                        if olt_repeated:
-                            st.write("Top values:", ', '.join([f"{k}({v})" for k, v in list(olt_repeated.items())[:3]]))
-    
-    # Show warnings for missing or mismatched mappings
-    issues = mapping_df[
-        (mapping_df['Category Match'].str.contains('⚠️|❌', na=False)) |
-        (mapping_df['Master Column'].str.contains('NOT FOUND', na=False)) |
-        (mapping_df['OLT Column'].str.contains('NOT FOUND', na=False))
-    ]
-    
-    if len(issues) > 0:
-        st.warning(f"⚠️ Found {len(issues)} fields with mapping issues. Please review them above.")
-    
-    # Manual mapping override section
-    with st.expander("🛠️ Manual Mapping Override (Advanced)"):
-        st.write("If automatic mapping is incorrect, you can manually select the correct columns below:")
-        
-        # Get all available columns
-        master_columns = list(master_df.columns)
-        olt_columns = list(olt_df.columns)
-        
-        # For each field that needs verification, provide dropdowns
-        for field, mapping in header_mapping.items():
-            # Find current mapping
-            current_master = None
-            current_olt = None
-            
-            for col in master_df.columns:
-                if clean_string_normalization(col) == clean_string_normalization(mapping['master_col']):
-                    current_master = col
-                    break
-            
-            for col in olt_df.columns:
-                if clean_string_normalization(col) == clean_string_normalization(mapping['olt_col']):
-                    current_olt = col
-                    break
-            
-            col1, col2, col3 = st.columns([2, 2, 1])
-            with col1:
-                selected_master = st.selectbox(
-                    f"Master column for '{field}'",
-                    options=['None'] + master_columns,
-                    index=0 if current_master is None else master_columns.index(current_master) + 1,
-                    key=f"manual_master_{field}"
-                )
-            with col2:
-                selected_olt = st.selectbox(
-                    f"OLT column for '{field}'",
-                    options=['None'] + olt_columns,
-                    index=0 if current_olt is None else olt_columns.index(current_olt) + 1,
-                    key=f"manual_olt_{field}"
-                )
-            with col3:
-                if selected_master != 'None' or selected_olt != 'None':
-                    mapping_key = f"{field}_{mapping['master_col']}_{mapping['olt_col']}"
-                    st.session_state.manual_mappings[mapping_key] = {
-                        'master': selected_master if selected_master != 'None' else None,
-                        'olt': selected_olt if selected_olt != 'None' else None
-                    }
-                    st.success("✅ Set")
-                else:
-                    st.write("Default")
-            st.write("---")
-    
-    # Verification confirmation
-    st.write("### ✅ Confirm Mappings")
-    
-    if mapping_verified:
-        st.success("✅ All column mappings are verified!")
+    if include_olt:
+        output_df = enriched_df
+        st.success(f"✅ Downloading with {len(enriched_columns)} OLT-enriched columns")
     else:
-        st.warning("⚠️ Some mappings have issues. Please review and fix them above.")
+        output_df = master_df
+        st.info("Downloading original Master format (without OLT columns)")
     
-    # User confirmation checkbox
-    confirm_mapping = st.checkbox(
-        "I have reviewed and verified all column mappings above",
-        value=st.session_state.mapping_confirmed,
-        key="confirm_mapping_checkbox"
-    )
-    
-    if confirm_mapping:
-        st.session_state.mapping_confirmed = True
-        st.success("✅ Mapping verified! Proceeding with data processing...")
-    else:
-        st.info("Please verify the column mappings before proceeding.")
-        # Stop here if not confirmed
-        st.stop()
-
-    # -----------------------------
-    # 📊 All Entries with Duplicate Highlighting
-    # -----------------------------
-    st.write(f"📂 **Active Master Sheet:** `{selected_master_sheet}` | **Active OLT Sheet:** `{selected_olt_sheet}`")
-
-    master_df[master_plaid_col_clean] = master_df[master_plaid_col_clean].astype(str).str.strip()
-    olt_df[olt_plaid_col_clean] = olt_df[olt_plaid_col_clean].astype(str).str.strip()
-
-    # Show all master entries with duplicate highlighting
-    st.subheader("📊 All Master Entries with Duplicate Highlighting")
-    
-    master_with_dup, master_styled = highlight_duplicates(master_df, master_plaid_col_clean)
-    
-    total_entries = len(master_df)
-    duplicate_count = master_df[master_plaid_col_clean].duplicated(keep=False).sum()
-    unique_entries = master_df[master_plaid_col_clean].nunique()
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Entries", total_entries)
-    col2.metric("Unique Entries", unique_entries)
-    col3.metric("Potential Duplicates", duplicate_count)
-    
-    st.dataframe(master_styled, use_container_width=True)
-    
-    if duplicate_count > 0:
-        with st.expander("🔍 View Duplicate Details"):
-            duplicates_only = master_with_dup[master_with_dup['DUPLICATE_STATUS'] == '⚠️ POTENTIAL DUPLICATE'].sort_values(master_plaid_col_clean)
-            st.write(f"Found **{len(duplicates_only)}** rows with potential duplicates")
-            st.dataframe(duplicates_only, use_container_width=True)
-
-    # -----------------------------
-    # 📉 Missing Records Analysis (For Information Only)
-    # -----------------------------
-    master_clean_df = master_df[master_df[master_plaid_col_clean].str.lower() != "nan"].copy()
-    missing_mask = ~master_clean_df[master_plaid_col_clean].isin(olt_df[olt_plaid_col_clean])
-    missing_records = master_clean_df[missing_mask].copy()
-
-    st.subheader("ℹ️ Missing Records Analysis (Information Only)")
-    st.write(f"Total rows in Master: **{len(master_df)}**")
-    st.write(f"Total rows already in OLT: **{len(olt_df)}**")
-    st.write(f"Rows that would be NEW additions: **{len(missing_records)}**")
-    st.write(f"Rows that would UPDATE existing entries: **{len(master_df) - len(missing_records)}**")
-    
-    if len(missing_records) > 0:
-        with st.expander("📋 View Missing Records (New Additions)"):
-            missing_with_dup, missing_styled = highlight_duplicates(missing_records, master_plaid_col_clean)
-            st.dataframe(missing_styled, use_container_width=True)
-
-    # -----------------------------
-    # 🔄 Map ALL Master Records to OLT Format
-    # -----------------------------
-    st.subheader("🔄 Mapping ALL Master Records to OLT Format")
-    st.info(f"Mapping all {len(master_df)} records from Master to OLT format...")
-    
-    # Create a DataFrame to hold ALL mapped records
-    all_mapped_df = pd.DataFrame(columns=olt_df.columns)
-    mapped_columns_log = []
-    mapping_issues = []
-    
-    # Process each OLT column based on the mapping
-    for olt_col in olt_df.columns:
-        clean_olt_name = clean_string_normalization(olt_col)
-        
-        # Skip empty or track columns
-        if clean_olt_name == "" or "solution track" in clean_olt_name or clean_olt_name == "track":
-            continue
-        
-        matched_master_col = None
-        formatting_func = None
-        match_confidence = "Low"
-        verification_note = ""
-        
-        # First, check if this OLT column is in our mapping
-        for field, mapping in header_mapping.items():
-            if clean_string_normalization(mapping['olt_col']) == clean_olt_name:
-                # Found a match in our mapping
-                master_header = mapping['master_col']
-                # Find the actual column in master_df
-                for clean_m_col in master_df.columns:
-                    if clean_string_normalization(clean_m_col) == clean_string_normalization(master_header):
-                        matched_master_col = clean_m_col
-                        formatting_func = mapping.get('format', None)
-                        
-                        # Comprehensive verification
-                        master_category, master_confidence, _ = detect_data_category(master_df[matched_master_col])
-                        olt_category, olt_confidence, _ = detect_data_category(olt_df[olt_col])
-                        is_cat_match, cat_conf, cat_desc = verify_category_match(
-                            master_category, master_confidence,
-                            olt_category, olt_confidence
-                        )
-                        
-                        similarity_score, is_similar, details, common_values, pattern_match = verify_data_similarity_with_patterns(
-                            master_df[matched_master_col],
-                            olt_df[olt_col]
-                        )
-                        
-                        if is_cat_match and is_similar and pattern_match:
-                            match_confidence = "High"
-                            verification_note = f"✅ Category: {master_category} ↔ {olt_category}, Similarity: {similarity_score:.1%}, Pattern: Match"
-                        elif is_cat_match and (is_similar or pattern_match):
-                            match_confidence = "Medium"
-                            verification_note = f"✅ Category: {master_category} ↔ {olt_category}, Similarity: {similarity_score:.1%}"
-                        elif is_cat_match:
-                            match_confidence = "Low"
-                            verification_note = f"⚠️ Category: {master_category} ↔ {olt_category}, Data patterns differ (Sim: {similarity_score:.1%})"
-                            if mapping.get('required', False):
-                                mapping_issues.append(f"⚠️ Required field '{field}' has low data similarity ({similarity_score:.1%})")
-                        else:
-                            match_confidence = "None"
-                            verification_note = f"⚠️ Category mismatch: {master_category} ↔ {olt_category}"
-                            if mapping.get('required', False):
-                                mapping_issues.append(f"⚠️ Required field '{field}' has category mismatch")
-                        
-                        break
-                if matched_master_col:
-                    mapped_columns_log.append({
-                        'olt_col': olt_col,
-                        'master_col': matched_master_col,
-                        'field': field,
-                        'confidence': match_confidence,
-                        'verification': verification_note,
-                        'description': mapping['description']
-                    })
-                break
-        
-        # If not in mapping, try to match by column name with comprehensive verification
-        if not matched_master_col:
-            best_match = None
-            best_score = 0
-            best_details = {}
+    # Download button
+    if st.button("⬇️ Download Enriched Master File", type="primary"):
+        try:
+            out_buffer = io.BytesIO()
+            with pd.ExcelWriter(out_buffer, engine='openpyxl') as writer:
+                output_df.to_excel(writer, sheet_name=selected_master_sheet, index=False)
             
-            for clean_m_col in master_df.columns:
-                # Check name similarity
-                if clean_string_normalization(clean_m_col) == clean_olt_name:
-                    best_match = clean_m_col
-                    best_score = 1.0
-                    break
-                
-                # Check partial match
-                if clean_olt_name in clean_string_normalization(clean_m_col) or clean_string_normalization(clean_m_col) in clean_olt_name:
-                    # Verify data category and similarity
-                    master_category, master_confidence, _ = detect_data_category(master_df[clean_m_col])
-                    olt_category, olt_confidence, _ = detect_data_category(olt_df[olt_col])
-                    is_cat_match, _, _ = verify_category_match(
-                        master_category, master_confidence,
-                        olt_category, olt_confidence
-                    )
-                    
-                    if is_cat_match:
-                        similarity_score, is_similar, details, _, _ = verify_data_similarity_with_patterns(
-                            master_df[clean_m_col],
-                            olt_df[olt_col]
-                        )
-                        
-                        if similarity_score > best_score:
-                            best_score = similarity_score
-                            best_match = clean_m_col
-                            best_details = details
+            out_buffer.seek(0)
             
-            if best_match and best_score > 0.4:
-                matched_master_col = best_match
-                match_confidence = "High" if best_score > 0.8 else "Medium" if best_score > 0.6 else "Low"
-                verification_note = f"🔀 Auto-matched by category & data patterns (Score: {best_score:.1%})"
-                mapped_columns_log.append({
-                    'olt_col': olt_col,
-                    'master_col': matched_master_col,
-                    'field': 'Auto-matched',
-                    'confidence': match_confidence,
-                    'verification': verification_note,
-                    'description': 'Auto-detected by name, category & data patterns'
-                })
-        
-        # Handle the PLAID column specially
-        if clean_olt_name == clean_string_normalization('PLAID'):
-            matched_master_col = master_plaid_col_clean
-            match_confidence = "High"
-            verification_note = "🔑 Key identifier verified"
-            mapped_columns_log.append({
-                'olt_col': olt_col,
-                'master_col': matched_master_col,
-                'field': 'PLAID',
-                'confidence': match_confidence,
-                'verification': verification_note,
-                'description': 'Primary Key Identifier'
-            })
-        
-        # Apply the mapping to ALL records
-        if matched_master_col:
-            # Apply any formatting function if defined
-            if formatting_func:
-                raw_values = master_df[matched_master_col].tolist()
-                all_mapped_df[olt_col] = [formatting_func(val) for val in raw_values]
+            # Generate filename
+            if include_olt:
+                file_name = f"Enriched_{master_file.name}"
             else:
-                all_mapped_df[olt_col] = master_df[matched_master_col].tolist()
-        else:
-            all_mapped_df[olt_col] = [""] * len(master_df)
-            mapped_columns_log.append({
-                'olt_col': olt_col,
-                'master_col': 'No match found',
-                'field': 'Unmapped',
-                'confidence': 'None',
-                'verification': '❌ Column will be left blank',
-                'description': 'No matching column found'
-            })
-    
-    # Display mapping warnings
-    if mapping_issues:
-        st.warning("⚠️ Data Verification Issues Found")
-        for issue in mapping_issues:
-            st.write(f"- {issue}")
-    
-    # Display mapping audit trail
-    with st.expander("👀 View Detailed Column Mapping Audit Trail"):
-        mapping_df_display = pd.DataFrame(mapped_columns_log)
-        # Color code confidence levels
-        def color_confidence(val):
-            if val == 'High':
-                return 'background-color: #90EE90'
-            elif val == 'Medium':
-                return 'background-color: #FFD700'
-            elif val == 'Low':
-                return 'background-color: #FFA500'
-            return ''
-        
-        # Apply styling using map
-        styled_mapping = mapping_df_display.style.map(color_confidence, subset=['confidence'])
-        st.dataframe(styled_mapping, use_container_width=True)
-    
-    # Exclude formatting column anomalies
-    all_mapped_df = all_mapped_df.loc[:, ~all_mapped_df.columns.astype(str).str.contains('track', case=False)]
-    
-    st.subheader("📋 All Mapped Records Preview")
-    st.write(f"Total mapped records: **{len(all_mapped_df)}**")
-    st.dataframe(all_mapped_df.head(100), use_container_width=True)
-    
-    # Show preview of filled data with verification
-    if len(all_mapped_df) > 0:
-        st.subheader("📊 Data Population Summary")
-        
-        # Show which columns have data
-        filled_cols = []
-        for col in all_mapped_df.columns:
-            non_null_count = all_mapped_df[col].notna().sum()
-            if non_null_count > 0:
-                filled_cols.append({
-                    'Column': col,
-                    'Filled Rows': non_null_count,
-                    'Fill Rate': f"{non_null_count/len(all_mapped_df)*100:.1f}%"
-                })
-        
-        if filled_cols:
-            filled_df = pd.DataFrame(filled_cols)
-            st.dataframe(filled_df, use_container_width=True)
-        
-        # Preview data
-        preview_cols = [col for col in all_mapped_df.columns if all_mapped_df[col].notna().any()][:10]
-        if preview_cols:
-            st.dataframe(all_mapped_df[preview_cols].head(10), use_container_width=True)
-
-    # -----------------------------
-    # 💾 Download Merged File - APPEND ALL RECORDS
-    # -----------------------------
-    if len(all_mapped_df) > 0:
-        st.subheader("💾 Append All Records to OLT")
-        st.info(f"⚠️ This will **APPEND** all {len(all_mapped_df)} records from Master to the OLT file.")
-        
-        if st.button("🚀 Append ALL Records to OLT Spreadsheet"):
-            try:
-                # Reload the original OLT file to preserve original column names
-                base_olt_df = olt_xls.parse(selected_olt_sheet, header=olt_header_idx)
-                
-                # Get the actual column names from the original file
-                original_olt_columns = list(base_olt_df.columns)
-                
-                # Create a mapping from cleaned to original column names
-                clean_to_original = {}
-                for orig_col in original_olt_columns:
-                    clean_col = clean_string_normalization(orig_col)
-                    # Find the matching cleaned column in all_mapped_df
-                    for clean_name in all_mapped_df.columns:
-                        if clean_string_normalization(clean_name) == clean_string_normalization(orig_col):
-                            clean_to_original[clean_name] = orig_col
-                            break
-                
-                # Rename all_mapped_df columns to match original OLT file
-                all_mapped_df_renamed = all_mapped_df.copy()
-                for clean_name, orig_name in clean_to_original.items():
-                    if clean_name in all_mapped_df_renamed.columns:
-                        all_mapped_df_renamed.rename(columns={clean_name: orig_name}, inplace=True)
-                
-                # Get the PLAID column in original names
-                base_plaid_col = chosen_olt_plaid_raw
-                
-                # Ensure the PLAID column exists in all_mapped_df_renamed
-                if base_plaid_col not in all_mapped_df_renamed.columns:
-                    # Try to find it by checking cleaned names
-                    for col in all_mapped_df_renamed.columns:
-                        if clean_string_normalization(col) == clean_string_normalization('PLAID'):
-                            base_plaid_col = col
-                            break
-                
-                # Filter out records with empty PLAID
-                valid_records = all_mapped_df_renamed[all_mapped_df_renamed[base_plaid_col].astype(str).str.strip() != '']
-                valid_records = valid_records[valid_records[base_plaid_col].astype(str).str.strip() != 'nan']
-                
-                st.info(f"📊 **Data Summary:**\n"
-                       f"- Total records to append: {len(all_mapped_df)}\n"
-                       f"- Valid records (with PLAID): {len(valid_records)}\n"
-                       f"- Skipped invalid records: {len(all_mapped_df) - len(valid_records)}")
-                
-                if len(valid_records) > 0:
-                    # Append ALL valid records to the OLT file
-                    final_combined_df = pd.concat([base_olt_df, valid_records], ignore_index=True)
-                    
-                    out_buffer = io.BytesIO()
-                    with pd.ExcelWriter(out_buffer, engine='openpyxl') as writer:
-                        final_combined_df.to_excel(writer, sheet_name=selected_olt_sheet, index=False)
-                    
-                    out_buffer.seek(0)
-                    
-                    st.success(f"🎉 Successfully appended {len(valid_records)} records to the OLT file!")
-                    st.write(f"**Total rows in new OLT file:** {len(final_combined_df)}")
-                    st.download_button(
-                        label="⬇️ Download Updated Nokia OLT Tracker File",
-                        data=out_buffer.getvalue(),
-                        file_name=f"Updated_{olt_file.name}",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                else:
-                    st.warning("⚠️ No valid records to append. All records have empty or invalid PLAID values.")
-                    
-            except Exception as err:
-                st.error(f"Failed to process file: {err}")
+                file_name = f"Original_{master_file.name}"
+            
+            st.success(f"🎉 Successfully created file with {len(output_df)} rows and {len(output_df.columns)} columns!")
+            
+            st.download_button(
+                label=f"⬇️ Download {'Enriched' if include_olt else 'Original'} Master Tracker File",
+                data=out_buffer.getvalue(),
+                file_name=file_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        except Exception as err:
+            st.error(f"Failed to process file: {err}")
+else:
+    st.info("Please upload both files to proceed.")
